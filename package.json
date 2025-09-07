@@ -1,0 +1,16 @@
+{
+  "name": "alicia-d-robot-control",
+  "version": "1.0.0",
+  "description": "FastAPI backend for Alicia-D robot control with v5.5.0 SDK",
+  "main": "main.py",
+  "scripts": {
+    "dev": "cd backend && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "start": "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000",
+    "install-deps": "pip install -r backend/requirements.txt"
+  },
+  "keywords": ["robot", "fastapi", "alicia-d", "robotics"],
+  "author": "Synria Robotics",
+  "license": "MIT",
+  "devDependencies": {},
+  "dependencies": {}
+}

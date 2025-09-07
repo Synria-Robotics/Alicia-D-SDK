@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alicia-D Robot Control - Demo Frontend</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        .emergency {
+            background-color: #dc3545 !important;
+        }
+        
+        .emergency:hover {
+            background-color: #c82333 !important;
+        }
+        
+        input, select {
+            padding: 5px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .joint-control {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 10px;
+            align-items: center;
+            margin: 5px 0;
+        }
+        
+        .log {
+            height: 200px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Alicia-D Robot Control</h1>
+        <p>Demo Frontend for FastAPI Backend (SDK v5.5.0)</p>
+    </div>
+
+    <div class="container">
+        <!-- Connection Panel -->
+        <div class="panel">
+            <h3>Connection</h3>
+            <div id="connectionStatus" class="status disconnected">Disconnected</div>
+            
+            <div>
+                <label>Port:</label>
+                <input type="text" id="portInput" placeholder="Leave empty for auto-detect">
+            </div>
+            <div>
+                <label>Baudrate:</label>
+                <select id="baudrateSelect">
+                    <option value="1000000">1000000 (v5.4.19+)</option>
+                    <option value="921600">921600 (older versions)</option>
+                </select>
+            </div>
+            
+            <button onclick="connectRobot()">Connect</button>
+            <button onclick="disconnectRobot()">Disconnect</button>
+            <button onclick="checkStatus()">Check Status</button>
+        </div>
+
+        <!-- Robot State Panel -->
+        <div class="panel">
+            <h3>Robot State</h3>
+            <button onclick="updateState()">Update State</button>
+            <div>
+                <label>Format:</label>
+                <select id="stateFormat">
+                    <option value="deg">Degrees</option>
+                    <option value="rad">Radians</option>
+                </select>
+            </div>
+            
+            <div id="robotState">
+                <p>Click "Update State" to get current robot information</p>
+            </div>
+        </div>
+
+        <!-- Movement Control Panel -->
+        <div class="panel">
+            <h3>Movement Control</h3>
+            
+            <h4>Joint Control</h4>
+            <div id="jointControls">
+                <!-- Will be populated by JavaScript -->
+            </div>
+            <button onclick="moveToJoints()">Move to Joints</button>
+            <button onclick="moveHome()">Move Home</button>
+            
+            <h4>Quick Positions</h4>
+            <button onclick="moveToPosition('home')">Home</button>
+            <button onclick="moveToPosition('neutral')">Neutral</button>
+        </div>
+
+        <!-- Gripper & Tools Panel -->
+        <div class="panel">
+            <h3>Gripper & Tools</h3>
+            
+            <h4>Gripper Control</h4>
+            <button onclick="controlGripper('open')">Open Gripper</button>
+            <button onclick="controlGripper('close')">Close Gripper</button>
+            <div>
+                <label>Angle (deg):</label>
+                <input type="number" id="gripperAngle" min="0" max="100" value="50">
+                <button onclick="setGripperAngle()">Set Angle</button>
+            </div>
+            
+            <h4>Teaching Mode</h4>
+            <button onclick="enableTeaching()">Enable Teaching</button>
+            <button onclick="disableTeaching()">Disable Teaching</button>
+            
+            <h4>Calibration</h4>
+            <button onclick="calibrateRobot()">Zero Calibration</button>
+        </div>
+    </div>
+
+    <!-- Log Panel -->
+    <div class="panel" style="margin-top: 20px;">
+        <h3>Activity Log</h3>
+        <div id="log" class="log"></div>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <script src="robot-api-client.js"></script>
+    <script>
+        const robotAPI = new RobotAPIClient();
+        let isConnected = false;
+
+        // Initialize joint controls
+        function initJointControls() {
+            const container = document.getElementById('jointControls');
+            for (let i = 1; i <= 6; i++) {
+                const div = document.createElement('div');
+                div.className = 'joint-control';
+                div.innerHTML = `
+                    <label>Joint ${i}:</label>
+                    <input type="number" id="joint${i}" value="0" step="0.1">
+                    <span>°</span>
+                `;
+                container.appendChild(div);
+            }
+        }
+
+        // Logging function
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.innerHTML = `[${timestamp}] ${message}`;
+            if (type === 'error') entry.style.color = 'red';
+            if (type === 'success') entry.style.color = 'green';
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.textContent = connected ? 'Connected' : 'Disconnected';
+            statusDiv.className = `status ${connected ? 'connected' : 'disconnected'}`;
+        }
+
+        // Connection functions
+        async function connectRobot() {
+            const port = document.getElementById('portInput').value;
+            const baudrate = parseInt(document.getElementById('baudrateSelect').value);
+            
+            try {
+                log(`Connecting to robot (port: ${port || 'auto'}, baudrate: ${baudrate})...`);
+                const result = await robotAPI.connect(port, baudrate);
+                if (result.success) {
+                    log('Successfully connected to robot!', 'success');
+                    updateConnectionStatus(true);
+                } else {
+                    log('Failed to connect: ' + result.message, 'error');
+                }
+            } catch (error) {
+                log('Connection error: ' + error.message, 'error');
+            }
+        }
+
+        async function disconnectRobot() {
+            try {
+                log('Disconnecting from robot...');
+                const result = await robotAPI.disconnect();
+                log('Disconnected from robot', 'success');
+                updateConnectionStatus(false);
+            } catch (error) {
+                log('Disconnect error: ' + error.message, 'error');
+            }
+        }
+
+        async function checkStatus() {
+            try {
+                const status = await robotAPI.getStatus();
+                updateConnectionStatus(status.is_connected);
+                log(`Status checked: ${status.is_connected ? 'Connected' : 'Disconnected'}`);
+            } catch (error) {
+                log('Status check error: ' + error.message, 'error');
+            }
+        }
+
+        // State functions
+        async function updateState() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            try {
+                const format = document.getElementById('stateFormat').value;
+                const state = await robotAPI.getRobotState(format);
+                
+                const stateDiv = document.getElementById('robotState');
+                const unit = format === 'deg' ? '°' : 'rad';
+                const joints = format === 'deg' ? state.joints_deg : state.joints;
+                const gripper = format === 'deg' ? state.gripper_deg : state.gripper;
+                
+                stateDiv.innerHTML = `
+                    <p><strong>Joints (${unit}):</strong> ${joints ? joints.map(j => j.toFixed(2)).join(', ') : 'N/A'}</p>
+                    <p><strong>Pose:</strong> ${state.pose ? state.pose.map(p => p.toFixed(3)).join(', ') : 'N/A'}</p>
+                    <p><strong>Gripper (${unit}):</strong> ${gripper ? gripper.toFixed(2) : 'N/A'}</p>
+                `;
+                
+                // Update joint input fields
+                if (joints) {
+                    joints.forEach((angle, index) => {
+                        const input = document.getElementById(`joint${index + 1}`);
+                        if (input) input.value = angle.toFixed(1);
+                    });
+                }
+                
+                log('Robot state updated');
+            } catch (error) {
+                log('State update error: ' + error.message, 'error');
+            }
+        }
+
+        // Movement functions
+        async function moveToJoints() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            const joints = [];
+            for (let i = 1; i <= 6; i++) {
+                const value = parseFloat(document.getElementById(`joint${i}`).value);
+                joints.push(value);
+            }
+
+            try {
+                log(`Moving to joints: [${joints.join(', ')}]°`);
+                const result = await robotAPI.moveJoints(joints, { format: 'deg' });
+                if (result.success) {
+                    log(`Joint movement completed (${result.execution_time?.toFixed(1)}s)`, 'success');
+                }
+            } catch (error) {
+                log('Joint movement error: ' + error.message, 'error');
+            }
+        }
+
+        async function moveHome() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            try {
+                log('Moving to home position...');
+                const result = await robotAPI.moveHome();
+                if (result.success) {
+                    log(`Moved to home position (${result.execution_time?.toFixed(1)}s)`, 'success');
+                }
+            } catch (error) {
+                log('Move home error: ' + error.message, 'error');
+            }
+        }
+
+        async function moveToPosition(position) {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            const positions = {
+                home: [0, 0, 0, 0, 0, 0],
+                neutral: [-30, 30, 30, 20, -20, 10]
+            };
+
+            if (positions[position]) {
+                // Update joint inputs and move
+                positions[position].forEach((angle, index) => {
+                    document.getElementById(`joint${index + 1}`).value = angle;
+                });
+                await moveToJoints();
+            }
+        }
+
+        // Gripper functions
+        async function controlGripper(command) {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            try {
+                log(`${command === 'open' ? 'Opening' : 'Closing'} gripper...`);
+                const result = await robotAPI.controlGripper(command);
+                if (result.success) {
+                    log(`Gripper ${command} completed`, 'success');
+                }
+            } catch (error) {
+                log('Gripper control error: ' + error.message, 'error');
+            }
+        }
+
+        async function setGripperAngle() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            const angle = parseFloat(document.getElementById('gripperAngle').value);
+            
+            try {
+                log(`Setting gripper to ${angle}°...`);
+                const result = await robotAPI.controlGripper(null, angle, 'deg');
+                if (result.success) {
+                    log(`Gripper set to ${angle}°`, 'success');
+                }
+            } catch (error) {
+                log('Gripper angle error: ' + error.message, 'error');
+            }
+        }
+
+        // Teaching mode functions
+        async function enableTeaching() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            try {
+                log('Enabling teaching mode (torque off)...');
+                const result = await robotAPI.controlTorque('off');
+                if (result.success) {
+                    log('Teaching mode enabled - you can now manually move the robot', 'success');
+                }
+            } catch (error) {
+                log('Teaching mode error: ' + error.message, 'error');
+            }
+        }
+
+        async function disableTeaching() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            try {
+                log('Disabling teaching mode (torque on)...');
+                const result = await robotAPI.controlTorque('on');
+                if (result.success) {
+                    log('Teaching mode disabled - robot is now under control', 'success');
+                }
+            } catch (error) {
+                log('Teaching mode error: ' + error.message, 'error');
+            }
+        }
+
+        // Calibration function
+        async function calibrateRobot() {
+            if (!isConnected) {
+                log('Robot not connected', 'error');
+                return;
+            }
+
+            const confirmed = confirm('Are you sure you want to perform zero calibration? Make sure the robot is in a safe position.');
+            if (!confirmed) return;
+
+            try {
+                log('Starting zero calibration...');
+                const result = await robotAPI.calibrate();
+                if (result.success) {
+                    log('Zero calibration completed', 'success');
+                }
+            } catch (error) {
+                log('Calibration error: ' + error.message, 'error');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Initialize the page
+        initJointControls();
+        log('Frontend initialized - Ready to connect to robot');
+        
+        // Auto-check status on load
+        setTimeout(checkStatus, 1000);
+    </script>
+</body>
+</html>
