@@ -47,6 +47,9 @@ class HardwareExecutor:
         self._completion_callback: Optional[Callable] = None
         self._error_callback: Optional[Callable] = None
         
+        # 状态通信组件（由外部设置）
+        self.state_manager = None
+        
         logger.info("初始化硬件执行器")
     
     # ==================== 轨迹执行接口 ====================
@@ -93,6 +96,9 @@ class HardwareExecutor:
         self._is_executing = True
         self._stop_execution.clear()
         self._current_trajectory = joint_trajectory
+        
+        # 通知状态管理器开始执行
+        self._notify_state_change(is_executing=True)
         
         # 启动执行线程
         self._execution_thread = threading.Thread(
@@ -186,6 +192,19 @@ class HardwareExecutor:
         self.max_delay = max(self.min_delay, max_delay)
         logger.info(f"设置延迟限制: {self.min_delay:.3f}s - {self.max_delay:.3f}s")
     
+    def set_state_manager(self, state_manager):
+        """设置状态管理器引用"""
+        self.state_manager = state_manager
+        logger.info("已设置状态管理器引用")
+    
+    def _notify_state_change(self, is_executing: bool):
+        """通知状态变化"""
+        if self.state_manager:
+            try:
+                self.state_manager.update_state(is_moving=is_executing)
+            except Exception as e:
+                logger.error(f"通知状态变化失败: {e}")
+    
     # ==================== 内部方法 ====================
     
     def _execute_trajectory_loop(self, 
@@ -228,6 +247,9 @@ class HardwareExecutor:
             self._is_executing = False
             self._current_trajectory = None
             
+            # 通知状态管理器执行完成
+            self._notify_state_change(is_executing=False)
+            
             # 调用完成回调
             if self._completion_callback:
                 try:
@@ -243,6 +265,8 @@ class HardwareExecutor:
         finally:
             self._is_executing = False
             self._current_trajectory = None
+            # 确保通知状态管理器执行结束
+            self._notify_state_change(is_executing=False)
     
     def _handle_execution_error(self, error_message: str):
         """处理执行错误"""

@@ -48,6 +48,10 @@ class StateManager:
         self.servo_driver = servo_driver
         self.robot_model = robot_model
         
+        # 状态通信组件（由外部设置）
+        self.motion_controller = None
+        self.hardware_executor = None
+        
         # 状态缓存
         self._current_state: Optional[RobotState] = None
         self._state_history: List[RobotState] = []
@@ -273,14 +277,54 @@ class StateManager:
     
     # ==================== 内部方法 ====================
     
+    def _get_motion_status(self) -> bool:
+        """获取运动状态"""
+        # 从硬件执行器获取执行状态
+        if self.hardware_executor:
+            return self.hardware_executor.is_executing()
+        return False
+    
+    def _get_online_control_status(self) -> bool:
+        """获取在线控制状态"""
+        # 从运动控制器获取在线控制状态
+        if self.motion_controller:
+            return self.motion_controller.is_online_control_active()
+        return False
+    
+    def _get_emergency_stop_status(self) -> bool:
+        """获取紧急停止状态"""
+        # 从运动控制器获取紧急停止状态
+        if self.motion_controller:
+            return self.motion_controller.emergency_stop
+        return False
+    
+    def set_motion_controller(self, motion_controller):
+        """设置运动控制器引用"""
+        self.motion_controller = motion_controller
+        logger.info("已设置运动控制器引用")
+    
+    def set_hardware_executor(self, hardware_executor):
+        """设置硬件执行器引用"""
+        self.hardware_executor = hardware_executor
+        logger.info("已设置硬件执行器引用")
+    
     def _monitoring_loop(self):
         """状态监控循环"""
         logger.info("状态监控循环开始")
         
         while self._monitoring_active:
             try:
-                # 更新状态（这里需要从外部获取运动状态信息）
-                self.update_state()
+                # 获取运动状态
+                is_moving = self._get_motion_status()
+                is_online_control = self._get_online_control_status()
+                emergency_stop = self._get_emergency_stop_status()
+                
+                # 更新状态
+                self.update_state(
+                    is_moving=is_moving,
+                    is_online_control=is_online_control,
+                    emergency_stop=emergency_stop
+                )
                 time.sleep(self._monitoring_interval)
             except Exception as e:
                 logger.error(f"状态监控循环异常: {e}")

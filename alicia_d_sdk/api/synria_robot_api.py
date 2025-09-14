@@ -53,6 +53,11 @@ class SynriaRobotAPI:
             servo_driver=servo_driver,
             robot_model=robot_model
         )
+        
+        # 建立状态通信
+        self.state_manager.set_motion_controller(self.motion_controller)
+        self.state_manager.set_hardware_executor(self.hardware_executor)
+        self.hardware_executor.set_state_manager(self.state_manager)
         self.trajectory_planner = TrajectoryPlanner(
             robot_model=robot_model,
             ik_controller=ik_controller
