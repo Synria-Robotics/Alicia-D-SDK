@@ -9,6 +9,11 @@ pyserial>=3.5
 matplotlib>=3.3.0
 pydantic>=1.8.0
 
+# 仿真依赖
+mujoco>=2.3.0
+mujoco-python-viewer>=0.1.0
+gymnasium>=0.29.0
+
 # 开发依赖 (可选)
 # pytest>=6.0.0
 # pytest-cov>=2.10.0

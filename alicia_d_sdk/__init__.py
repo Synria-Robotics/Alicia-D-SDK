@@ -17,6 +17,7 @@ from .control import MotionController, StateManager
 from .execution import HardwareExecutor
 from .planning import TrajectoryPlanner, OnlineInterpolator
 from .kinematics import RobotModel, IKController
+from .simulation import MuJoCoManager, RobotSimulator, SimulationInterface
 
 # 版本信息
 __version__ = "5.6.0"
@@ -34,8 +35,12 @@ __all__ = [
     "OnlineInterpolator",
     "RobotModel",
     "IKController",
+    "MuJoCoManager",
+    "RobotSimulator",
+    "SimulationInterface",
     "create_robot",
-    "create_session"
+    "create_session",
+    "create_simulation_robot"
 ]
 
 # 工厂函数
@@ -116,3 +121,16 @@ def create_session(port: str = "", baudrate: int = 1000000, debug_mode: bool = F
         'trajectory_planner': trajectory_planner,
         'online_interpolator': online_interpolator
     }
+
+def create_simulation_robot(model_path: str = None, enable_viewer: bool = True) -> SimulationInterface:
+    """
+    创建仿真机械臂实例
+    
+    Args:
+        model_path: MuJoCo模型文件路径
+        enable_viewer: 是否启用可视化
+        
+    Returns:
+        SimulationInterface: 仿真机械臂接口实例
+    """
+    return SimulationInterface(model_path=model_path, enable_viewer=enable_viewer)
