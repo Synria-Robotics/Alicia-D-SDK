@@ -1,65 +1,129 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Demo: Teaching 模式下记录末端姿态轨迹并回放
+示例6: 笛卡尔空间运动 - 展示如何进行笛卡尔空间运动控制
 
-- 用户通过拖动机械臂并按下回车手动记录多个 Waypoint
-- 系统记录每个姿态点（[x, y, z, qx, qy, qz, qw]）
-- 再通过 moveCartesian 插值执行这些轨迹
-- 支持可视化与姿态显示
+这个示例展示了如何使用movePose和moveCartesian进行笛卡尔空间运动控制。
 """
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'alicia_d_sdk'))
+
+from alicia_d_sdk import create_robot
 import time
 import numpy as np
-from alicia_d_sdk.controller import create_session, SynriaRobotAPI
 
-def teaching_demo_cartesian(args):
-    # === 初始化机器人会话 ===
-    # 创建会话和控制器
-    session = create_session(baudrate=args.baudrate, port=args.port)
-    controller = SynriaRobotAPI(session=session)
 
-    print(">>> 关闭扭矩，请手动拖动机械臂到若干目标位置")
-    input("按 Enter 开始记录教学 Waypoint，输入 q 可提前结束")
-    controller.torque_control(command='off')
+def main():
+    """主函数"""
+    print("=== Alicia-D SDK 笛卡尔空间运动示例 ===")
+    
+    # 创建机械臂实例
+    robot = create_robot(port="COM6", baudrate=1000000, debug_mode=True)
+    
+    try:
+        # 连接到机械臂
+        print("正在连接机械臂...")
+        if not robot.connect():
+            print("连接失败，请检查串口设置")
+            return
+        
+        print("连接成功！")
+        
+        # 移动到初始位置
+        print("\n移动到初始位置...")
+        robot.moveHome()
+        
+        # 单点位姿运动
+        print("\n单点位姿运动...")
+        target_pose = [0.3, 0.1, 0.2, 0, 0, 0, 1]  # [x, y, z, qx, qy, qz, qw]
+        print(f"目标位姿: 位置=[{target_pose[0]:.3f}, {target_pose[1]:.3f}, {target_pose[2]:.3f}], "
+              f"姿态=[{target_pose[3]:.3f}, {target_pose[4]:.3f}, {target_pose[5]:.3f}, {target_pose[6]:.3f}]")
+        robot.movePose(target_pose=target_pose, speed_factor=0.5)
+        
+        time.sleep(2)
+        
+        # 多点笛卡尔轨迹 - 矩形路径
+        print("\n多点笛卡尔轨迹 - 矩形路径...")
+        pose_waypoints = [
+            [0.3, 0.0, 0.2, 0, 0, 0, 1],  # 起点
+            [0.3, 0.1, 0.2, 0, 0, 0, 1],  # 右上
+            [0.3, 0.1, 0.3, 0, 0, 0, 1],  # 右上高
+            [0.3, 0.0, 0.3, 0, 0, 0, 1],  # 左上高
+            [0.3, 0.0, 0.2, 0, 0, 0, 1]   # 回到起点
+        ]
+        
+        print("轨迹点:")
+        for i, wp in enumerate(pose_waypoints):
+            print(f"  点{i+1}: 位置=[{wp[0]:.3f}, {wp[1]:.3f}, {wp[2]:.3f}], "
+                  f"姿态=[{wp[3]:.3f}, {wp[4]:.3f}, {wp[5]:.3f}, {wp[6]:.3f}]")
+        
+        robot.moveCartesian(
+            waypoints=pose_waypoints,
+            speed_factor=0.3,
+            interpolation_type="linear"
+        )
+        
+        time.sleep(2)
+        
+        # 圆形轨迹
+        print("\n圆形轨迹...")
+        center = [0.3, 0.0, 0.25]
+        radius = 0.05
+        num_points = 16
+        
+        circle_waypoints = []
+        for i in range(num_points + 1):  # +1 回到起点
+            angle = i * 2 * np.pi / num_points
+            x = center[0] + radius * np.cos(angle)
+            y = center[1] + radius * np.sin(angle)
+            z = center[2]
+            circle_waypoints.append([x, y, z, 0, 0, 0, 1])
+        
+        print(f"圆形轨迹: 中心={center}, 半径={radius}, 点数={len(circle_waypoints)}")
+        robot.moveCartesian(
+            waypoints=circle_waypoints,
+            speed_factor=0.2,
+            interpolation_type="cubic"
+        )
+        
+        time.sleep(2)
+        
+        # 螺旋轨迹
+        print("\n螺旋轨迹...")
+        spiral_waypoints = []
+        for i in range(20):
+            angle = i * 2 * np.pi / 10
+            x = center[0] + radius * np.cos(angle)
+            y = center[1] + radius * np.sin(angle)
+            z = center[2] + i * 0.01  # 逐渐上升
+            spiral_waypoints.append([x, y, z, 0, 0, 0, 1])
+        
+        print(f"螺旋轨迹: 点数={len(spiral_waypoints)}")
+        robot.moveCartesian(
+            waypoints=spiral_waypoints,
+            speed_factor=0.15,
+            interpolation_type="cubic"
+        )
+        
+        time.sleep(2)
+        
+        # 返回初始位置
+        print("\n返回初始位置...")
+        robot.moveHome()
+        
+        print("\n笛卡尔空间运动示例完成！")
+        
+    except KeyboardInterrupt:
+        print("\n用户中断")
+    except Exception as e:
+        print(f"\n发生错误: {e}")
+    finally:
+        # 断开连接
+        robot.disconnect()
+        print("已断开连接")
 
-    waypoints = []
-
-    while True:
-        cmd = input("拖动完成后按 Enter 记录当前位置，输入 q 结束录制: ").strip()
-        if cmd.lower() == 'q':
-            break
-
-        pose = controller.get_pose()
-        grip = controller.get_gripper()
-        wp = pose + [grip]
-        waypoints.append(wp)
-        print(f"[记录成功] Waypoint {len(waypoints)}: pose={np.round(pose, 4).tolist()}, gripper={grip:.3f} rad")
-
-    print(">>> 重新开启扭矩")
-    controller.torque_control('on')
-
-    if not waypoints:
-        print("[退出] 未记录任何姿态点")
-        return
-
-    print(f"\n>>> 共记录 {len(waypoints)} 个姿态点，准备开始轨迹回放...")
-    time.sleep(1.0)
-
-    controller.moveCartesian(
-        waypoints=waypoints,
-        reverse=True,           # 反向执行轨迹 （从最后一个记录点开始反向执行）
-        planner_name='cartesian',     # 可改为 'cartesian' 或 'lqt'
-        move_time=3.0,          # 预计执行时长
-        visualize=True,         # 轨迹图可视化
-        show_ori=True           # 轨迹图是否显示姿态
-    )
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    # !!! 请先使用00_demo_read_version.py检查版本号 !!!
-    # !!! 如果你能够读到版本号，版本号为5.4.19以上，则使用默认波特率1000000 !!!
-    # !!! 如果显示超时或者多次尝试后没有版本号输出，则使用默认波特率921600 !!!
-    parser.add_argument('--baudrate', type=int, default=1000000, help="波特率")
-    parser.add_argument('--port', type=str, default="", help="串口端口")
-    args = parser.parse_args()
-    teaching_demo_cartesian(args)
+    main()

@@ -1,35 +1,75 @@
-'''
-Demo: 打印机械臂信息（关节角度，夹爪角度，以及末端位姿）
-'''
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+示例4: 读取状态 - 展示如何读取机械臂状态信息
 
-from alicia_d_sdk.controller import create_session, SynriaRobotAPI
+这个示例展示了如何读取机械臂的关节角度、末端位姿、夹爪状态等信息。
+"""
 
-def main(args):
-    # 创建会话和控制器
-    session = create_session(baudrate=args.baudrate, port=args.port)
-    controller = SynriaRobotAPI(session=session)
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'alicia_d_sdk'))
 
+from alicia_d_sdk import create_robot
+import time
+
+
+def main():
+    """主函数"""
+    print("=== Alicia-D SDK 读取状态示例 ===")
+    
+    # 创建机械臂实例
+    robot = create_robot(port="COM6", baudrate=1000000, debug_mode=True)
+    
     try:
-        # 单次打印机械臂状态， 关节输出为弧度值
-        controller.print_state(continous_printing=False,
-                            output_format= 'rad')
-
-        # 持续打印机械臂状态， 关节输出为角度值
-        controller.print_state(continous_printing=True,
-                            output_format= 'deg')
-    except KeyboardInterrupt:
-        print("读取中断")
-
+        # 连接到机械臂
+        print("正在连接机械臂...")
+        if not robot.connect():
+            print("连接失败，请检查串口设置")
+            return
+        
+        print("连接成功！")
+        
+        # 连续读取状态信息
+        print("\n开始读取状态信息（按Ctrl+C停止）...")
+        try:
+            while True:
+                # 读取关节角度
+                joints = robot.get_joints()
+                if joints:
+                    print(f"关节角度 (弧度): {[round(j, 3) for j in joints]}")
+                    print(f"关节角度 (度): {[round(j * 180 / 3.14159, 1) for j in joints]}")
+                
+                # 读取末端位姿
+                pose = robot.get_pose()
+                if pose:
+                    print(f"末端位姿: 位置=[{pose[0]:.3f}, {pose[1]:.3f}, {pose[2]:.3f}], "
+                          f"姿态=[{pose[3]:.3f}, {pose[4]:.3f}, {pose[5]:.3f}, {pose[6]:.3f}]")
+                
+                # 读取夹爪状态
+                gripper = robot.get_gripper()
+                if gripper is not None:
+                    print(f"夹爪角度: {gripper:.1f}°")
+                
+                # 检查运动状态
+                is_moving = robot.is_moving()
+                print(f"运动状态: {'运动中' if is_moving else '静止'}")
+                
+                print("-" * 50)
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            print("\n停止读取状态")
+        
+        print("\n示例完成！")
+        
+    except Exception as e:
+        print(f"\n发生错误: {e}")
     finally:
-        session.joint_controller.disconnect()
+        # 断开连接
+        robot.disconnect()
+        print("已断开连接")
 
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    # !!! 请先使用00_demo_read_version.py检查版本号 !!!
-    # !!! 如果你能够读到版本号，版本号为5.4.19以上，则使用默认波特率1000000 !!!
-    # !!! 如果显示超时或者多次尝试后没有版本号输出，则使用默认波特率921600 !!!
-    parser.add_argument('--baudrate', type=int, default=1000000, help="波特率")
-    parser.add_argument('--port', type=str, default="", help="串口端口")
-    args = parser.parse_args()
-    main(args)
+
+if __name__ == "__main__":
+    main()

@@ -1,45 +1,93 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Demo: 使用 moveJ 控制机械臂移动到目标关节位置，已包含关节角线性插值
+示例5: 关节空间运动 - 展示如何进行关节空间运动控制
+
+这个示例展示了如何使用moveJ和moveJ_waypoints进行关节空间运动控制。
 """
 
-from alicia_d_sdk.controller import create_session, SynriaRobotAPI
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'alicia_d_sdk'))
 
-def main(args):
-    # 创建会话和控制器
-    session = create_session(baudrate=args.baudrate, port=args.port)
-    controller = SynriaRobotAPI(session=session)
+from alicia_d_sdk import create_robot
+import time
 
+
+def main():
+    """主函数"""
+    print("=== Alicia-D SDK 关节空间运动示例 ===")
+    
+    # 创建机械臂实例
+    robot = create_robot(port="COM6", baudrate=1000000, debug_mode=True)
+    
     try:
-        # 设置目标角度（以 degree 为例)
-        target_joints_deg = [-30, 30.0, 30.0, 20.0, -20.0, 10.0]  # 夹角格式：deg
-
+        # 连接到机械臂
+        print("正在连接机械臂...")
+        if not robot.connect():
+            print("连接失败，请检查串口设置")
+            return
+        
+        print("连接成功！")
+        
         # 移动到初始位置
-        controller.moveHome()
-
-        # 调用 moveJ
-        controller.moveJ(
-            joint_format='deg',              # 角度单位，可选 'rad' 或 'deg'
-            target_joints=target_joints_deg,
-            speed_factor=1,                # 控制速度（1.0 = 默认速度）
-            visualize=False                  # 可视化轨迹
+        print("\n移动到初始位置...")
+        robot.moveHome()
+        
+        # 单点关节运动
+        print("\n单点关节运动...")
+        target_joints = [0.5, -0.3, 0.2, 0.0, 0.5, 0.0]  # 弧度
+        print(f"目标关节角度: {[round(j, 3) for j in target_joints]}")
+        robot.moveJ(target_joints=target_joints, joint_format='rad', speed_factor=0.5)
+        
+        time.sleep(2)
+        
+        # 多点关节轨迹
+        print("\n多点关节轨迹...")
+        waypoints = [
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],      # 初始位置
+            [0.3, -0.2, 0.1, 0.0, 0.3, 0.0],     # 中间点1
+            [0.6, -0.4, 0.3, 0.0, 0.6, 0.0],     # 中间点2
+            [0.3, 0.2, 0.1, 0.0, -0.3, 0.0],     # 中间点3
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]       # 回到初始位置
+        ]
+        
+        print("轨迹点:")
+        for i, wp in enumerate(waypoints):
+            print(f"  点{i+1}: {[round(j, 3) for j in wp]}")
+        
+        robot.moveJ_waypoints(
+            waypoints=waypoints,
+            joint_format='rad',
+            speed_factor=0.3,
+            interpolation_type="cubic"
         )
-
-        # 移动到初始位置
-        controller.moveHome()
-    
+        
+        time.sleep(2)
+        
+        # 使用度数的关节运动
+        print("\n使用度数的关节运动...")
+        target_degrees = [30, -45, 60, 0, 90, 0]  # 度数
+        print(f"目标关节角度: {target_degrees}°")
+        robot.moveJ(target_joints=target_degrees, joint_format='deg', speed_factor=0.4)
+        
+        time.sleep(2)
+        
+        # 返回初始位置
+        print("\n返回初始位置...")
+        robot.moveHome()
+        
+        print("\n关节空间运动示例完成！")
+        
     except KeyboardInterrupt:
-        print("示例终止")
-    
+        print("\n用户中断")
+    except Exception as e:
+        print(f"\n发生错误: {e}")
     finally:
-        session.joint_controller.disconnect()
+        # 断开连接
+        robot.disconnect()
+        print("已断开连接")
+
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--baudrate', type=int, default=1000000, help="波特率")
-    # !!! 请先使用00_demo_read_version.py检查版本号 !!!
-    # !!! 如果你能够读到版本号，版本号为5.4.19以上，则使用默认波特率1000000 !!!
-    # !!! 如果显示超时或者多次尝试后没有版本号输出，则使用默认波特率921600 !!!
-    parser.add_argument('--port', type=str, default="", help="串口端口")
-    args = parser.parse_args()
-    main(args)
+    main()
