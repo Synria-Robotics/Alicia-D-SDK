@@ -49,6 +49,8 @@ class HardwareExecutor:
         
         # 状态通信组件（由外部设置）
         self.state_manager = None
+        self.online_interpolator = None
+        self.use_smooth_execution = True  # 默认使用平滑执行
         
         logger.info("初始化硬件执行器")
     
@@ -197,6 +199,16 @@ class HardwareExecutor:
         self.state_manager = state_manager
         logger.info("已设置状态管理器引用")
     
+    def set_online_interpolator(self, online_interpolator):
+        """设置在线插值器引用"""
+        self.online_interpolator = online_interpolator
+        logger.info("已设置在线插值器引用")
+    
+    def set_smooth_execution(self, enabled: bool):
+        """设置是否使用平滑执行"""
+        self.use_smooth_execution = enabled
+        logger.info(f"平滑执行: {'启用' if enabled else '禁用'}")
+    
     def _notify_state_change(self, is_executing: bool):
         """通知状态变化"""
         if self.state_manager:
@@ -204,6 +216,94 @@ class HardwareExecutor:
                 self.state_manager.update_state(is_moving=is_executing)
             except Exception as e:
                 logger.error(f"通知状态变化失败: {e}")
+    
+    def _execute_with_online_interpolation(self, 
+                                         joint_trajectory: List[List[float]], 
+                                         gripper_trajectory: Optional[List[float]] = None):
+        """使用在线插值器进行平滑执行"""
+        try:
+            total_points = len(joint_trajectory)
+            
+            # 启动在线插值器
+            if not self.online_interpolator.start():
+                logger.error("启动在线插值器失败，回退到固定延迟执行")
+                self._execute_with_fixed_delay(joint_trajectory, gripper_trajectory)
+                return
+            
+            logger.info("使用在线插值器进行平滑轨迹执行")
+            
+            # 逐点执行轨迹
+            for i, joint_point in enumerate(joint_trajectory):
+                # 检查停止信号
+                if self._stop_execution.is_set():
+                    logger.info("收到停止信号，终止执行")
+                    break
+                
+                # 设置关节目标
+                self.online_interpolator.set_joint_target(joint_point)
+                
+                # 设置夹爪目标
+                if gripper_trajectory and i < len(gripper_trajectory):
+                    gripper_angle = gripper_trajectory[i]
+                    if gripper_angle is not None:
+                        self.online_interpolator.set_gripper_target(gripper_angle)
+                
+                # 等待到达目标
+                while not self.online_interpolator.is_target_reached(tolerance=0.01):
+                    if self._stop_execution.is_set():
+                        break
+                    time.sleep(0.01)
+                
+                # 调用进度回调
+                if self._progress_callback:
+                    try:
+                        self._progress_callback(i + 1, total_points, joint_point)
+                    except Exception as e:
+                        logger.error(f"进度回调函数执行失败: {e}")
+            
+            # 停止在线插值器
+            self.online_interpolator.stop()
+            
+        except Exception as e:
+            logger.error(f"在线插值执行失败: {e}")
+            if self.online_interpolator:
+                self.online_interpolator.stop()
+            raise
+    
+    def _execute_with_fixed_delay(self, 
+                                 joint_trajectory: List[List[float]], 
+                                 gripper_trajectory: Optional[List[float]] = None):
+        """使用固定延迟执行（原始方法）"""
+        total_points = len(joint_trajectory)
+        
+        for i, joint_point in enumerate(joint_trajectory):
+            # 检查停止信号
+            if self._stop_execution.is_set():
+                logger.info("收到停止信号，终止执行")
+                break
+            
+            # 执行关节点
+            success = self.servo_driver.set_joint_angles(joint_point)
+            if not success:
+                logger.error(f"执行第{i+1}个点失败")
+                self._handle_execution_error(f"执行第{i+1}个点失败")
+                break
+            
+            # 执行夹爪点
+            if gripper_trajectory and i < len(gripper_trajectory):
+                gripper_angle = gripper_trajectory[i]
+                if gripper_angle is not None:
+                    self.servo_driver.set_gripper(gripper_angle)
+            
+            # 调用进度回调
+            if self._progress_callback:
+                try:
+                    self._progress_callback(i + 1, total_points, joint_point)
+                except Exception as e:
+                    logger.error(f"进度回调函数执行失败: {e}")
+            
+            # 延迟
+            time.sleep(self._current_delay)
     
     # ==================== 内部方法 ====================
     
@@ -214,34 +314,13 @@ class HardwareExecutor:
         try:
             total_points = len(joint_trajectory)
             
-            for i, joint_point in enumerate(joint_trajectory):
-                # 检查停止信号
-                if self._stop_execution.is_set():
-                    logger.info("收到停止信号，终止执行")
-                    break
-                
-                # 执行关节点
-                success = self.servo_driver.set_joint_angles(joint_point)
-                if not success:
-                    logger.error(f"执行第{i+1}个点失败")
-                    self._handle_execution_error(f"执行第{i+1}个点失败")
-                    break
-                
-                # 执行夹爪点
-                if gripper_trajectory and i < len(gripper_trajectory):
-                    gripper_angle = gripper_trajectory[i]
-                    if gripper_angle is not None:
-                        self.servo_driver.set_gripper(gripper_angle)
-                
-                # 调用进度回调
-                if self._progress_callback:
-                    try:
-                        self._progress_callback(i + 1, total_points, joint_point)
-                    except Exception as e:
-                        logger.error(f"进度回调函数执行失败: {e}")
-                
-                # 延迟
-                time.sleep(self._current_delay)
+            # 选择执行方式：根据配置和条件选择
+            if (self.use_smooth_execution and 
+                self.online_interpolator and 
+                len(joint_trajectory) > 1):
+                self._execute_with_online_interpolation(joint_trajectory, gripper_trajectory)
+            else:
+                self._execute_with_fixed_delay(joint_trajectory, gripper_trajectory)
             
             # 执行完成
             self._is_executing = False

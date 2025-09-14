@@ -58,6 +58,7 @@ class SynriaRobotAPI:
         self.state_manager.set_motion_controller(self.motion_controller)
         self.state_manager.set_hardware_executor(self.hardware_executor)
         self.hardware_executor.set_state_manager(self.state_manager)
+        self.hardware_executor.set_online_interpolator(self.online_interpolator)
         self.trajectory_planner = TrajectoryPlanner(
             robot_model=robot_model,
             ik_controller=ik_controller
@@ -77,6 +78,9 @@ class SynriaRobotAPI:
             (-1.57, 1.57),  # 关节5
             (-3.14, 3.14),  # 关节6
         ]
+        
+        # 执行配置
+        self.use_smooth_execution = True  # 是否使用平滑执行
         
         logger.info("初始化Synria机械臂API")
     
@@ -580,6 +584,34 @@ class SynriaRobotAPI:
         """设置笛卡尔限位"""
         self.motion_controller.set_cartesian_limits(cartesian_limits)
         logger.info("笛卡尔限位已设置")
+    
+    def set_smooth_execution(self, enabled: bool):
+        """设置是否使用平滑执行"""
+        self.use_smooth_execution = enabled
+        self.hardware_executor.set_smooth_execution(enabled)
+        logger.info(f"平滑执行: {'启用' if enabled else '禁用'}")
+    
+    def set_execution_mode(self, mode: str):
+        """
+        设置执行模式
+        
+        Args:
+            mode: 执行模式 ("smooth", "fast", "precise")
+        """
+        if mode == "smooth":
+            self.use_smooth_execution = True
+            self.hardware_executor.set_default_delay(0.02)
+        elif mode == "fast":
+            self.use_smooth_execution = False
+            self.hardware_executor.set_default_delay(0.01)
+        elif mode == "precise":
+            self.use_smooth_execution = True
+            self.hardware_executor.set_default_delay(0.05)
+        else:
+            logger.error(f"不支持的执行模式: {mode}")
+            return
+        
+        logger.info(f"执行模式设置为: {mode}")
     
     # ==================== 内部方法 ====================
     
