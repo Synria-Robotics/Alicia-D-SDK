@@ -16,7 +16,7 @@ from ..utils.logger import logger
 class RobotSimulator:
     """机械臂仿真器 - 提供与真实机械臂兼容的接口"""
     
-    def __init__(self, model_path: str = None, enable_viewer: bool = True):
+    def __init__(self, model_path: str = None, enable_viewer: bool = True, end_effector_body_name: str = None):
         """
         初始化机械臂仿真器
         
@@ -24,7 +24,7 @@ class RobotSimulator:
             model_path: MuJoCo模型文件路径
             enable_viewer: 是否启用可视化
         """
-        self.mujoco_manager = MuJoCoManager(model_path, enable_viewer)
+        self.mujoco_manager = MuJoCoManager(model_path, enable_viewer, end_effector_body_name=end_effector_body_name)
         
         # 仿真状态
         self.is_connected = False
@@ -413,6 +413,9 @@ class RobotSimulator:
                 if not self.set_joint_angles(joint_point, joint_format):
                     logger.error(f"执行第{i+1}个轨迹点失败")
                     return False
+
+                # 主线程渲染尝试
+                self.mujoco_manager.render_if_possible()
                 
                 # 调用进度回调
                 if self.progress_callback:
@@ -458,6 +461,9 @@ class RobotSimulator:
                 if not self.set_gripper_angle(angle, joint_format):
                     logger.error(f"执行第{i+1}个夹爪轨迹点失败")
                     return False
+
+                # 主线程渲染尝试
+                self.mujoco_manager.render_if_possible()
                 
                 # 调用进度回调
                 if self.progress_callback:

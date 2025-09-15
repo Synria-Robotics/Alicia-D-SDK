@@ -20,7 +20,8 @@ def demo_basic_simulation():
     print("=== MuJoCo仿真基本演示 ===")
     
     # 创建仿真机械臂
-    robot = create_simulation_robot(enable_viewer=True)
+    # 可选: 指定末端执行器 body 名称 (默认自动解析: end_effector/tool0/Link6/Link7/Link8...)
+    robot = create_simulation_robot(enable_viewer=True, end_effector_body_name=None)
     
     try:
         # 连接仿真环境
@@ -38,8 +39,14 @@ def demo_basic_simulation():
         end_effector_pose = robot.get_end_effector_pose()
         
         print(f"初始关节角度: {[f'{angle:.3f}' for angle in joint_angles]}")
-        print(f"初始夹爪角度: {gripper_angle:.3f}")
-        print(f"初始末端位姿: {[f'{pos:.3f}' for pos in end_effector_pose]}")
+        if gripper_angle is not None:
+            print(f"初始夹爪角度: {gripper_angle:.3f}")
+        else:
+            print("初始夹爪角度: 未能获取 (夹爪关节未解析)")
+        if end_effector_pose is not None:
+            print(f"初始末端位姿: {[f'{pos:.3f}' for pos in end_effector_pose]}")
+        else:
+            print("初始末端位姿: 未能解析 (可在 create_simulation_robot 传入 end_effector_body_name=\"Link6\" 等尝试)")
         
         # 基本关节运动
         print("\n=== 基本关节运动 ===")
@@ -80,8 +87,14 @@ def demo_basic_simulation():
         end_effector_pose = robot.get_end_effector_pose()
         
         print(f"运动后关节角度: {[f'{angle:.3f}' for angle in joint_angles]}")
-        print(f"运动后夹爪角度: {gripper_angle:.3f}")
-        print(f"运动后末端位姿: {[f'{pos:.3f}' for pos in end_effector_pose]}")
+        if gripper_angle is not None:
+            print(f"运动后夹爪角度: {gripper_angle:.3f}")
+        else:
+            print("运动后夹爪角度: 未能获取")
+        if end_effector_pose is not None:
+            print(f"运动后末端位姿: {[f'{pos:.3f}' for pos in end_effector_pose]}")
+        else:
+            print("运动后末端位姿: 未能解析 (尝试指定 end_effector_body_name)")
         
         return True
         

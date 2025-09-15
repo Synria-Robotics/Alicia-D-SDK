@@ -1,66 +1,78 @@
-<?xml version="1.0" ?>
-<mujoco model="alicia_arm">
-  <compiler angle="radian" coordinate="local" inertiafromgeom="true"/>
-  
+<mujoco model="Alicia_D_v5_4">
+  <compiler angle="radian" meshdir="./meshes/" />
   <default>
-    <joint armature="0.1" damping="0.1" limited="true"/>
-    <geom conaffinity="0" condim="3" density="5.0" friction="1 0.5 0.001" rgba="0.8 0.6 0.4 1"/>
-    <motor ctrllimited="true" ctrlrange="-1 1"/>
+    <joint armature="0.001" damping="0.01" frictionloss="0.001" limited="true" margin="0.001" type="hinge" />
+    <geom material="black" />
   </default>
-
   <asset>
-    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="300" height="300"/>
-    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.2"/>
+    <mesh name="base_link" file="base_link.STL" />
+    <mesh name="Link1" file="Link1.STL" />
+    <mesh name="Link2" file="Link2.STL" />
+    <mesh name="Link3" file="Link3.STL" />
+    <mesh name="Link4" file="Link4.STL" />
+    <mesh name="Link5" file="Link5.STL" />
+    <mesh name="Link6" file="Link6.STL" />
+    <mesh name="Grasp_base" file="Grasp_base.STL" />
+    <mesh name="Link7" file="Link7.STL" />
+    <mesh name="Link8" file="Link8.STL" />
+    <texture builtin="gradient" height="100" rgb1=".4 .5 .6" rgb2="0 0 0" type="skybox" width="100" />
+    <texture builtin="checker" height="100" name="texplane" rgb1="1 1 1" rgb2=".8 .9 1" type="2d" width="100" />
+    <material name="MatPlane" reflectance="0.5" texrepeat="1 1" texture="texplane" texuniform="true" />
+    <material name="white" rgba="1 1 1 1" shininess="0.5" specular="0.1" />
+    <material name="black" rgba="0.25 0.25 0.25 1" shininess="0.2" specular="0.05" />
+    <material name="invisible" rgba="1 1 1 0" shininess="0" specular="0" />
   </asset>
 
   <worldbody>
-    <light cutoff="100" diffuse="1 1 1" dir="-0 0 -1.3" dirfromto="0 0 0 0 0 -1" directional="true" exponent="1" pos="0 0 1.3" specular=".1 .1 .1"/>
-    <geom name="floor" pos="0 0 0" size="1 1 0.1" type="plane" material="grid"/>
-    
-    <!-- 机械臂基座 -->
-    <body name="base" pos="0 0 0.1">
-      <geom name="base_link" pos="0 0 0" size="0.05 0.05 0.05" type="box" rgba="0.2 0.2 0.2 1"/>
-      
-      <!-- 关节1 - 基座旋转 -->
-      <body name="joint1" pos="0 0 0.05">
-        <joint name="joint1" axis="0 0 1" pos="0 0 0" range="-3.14 3.14" type="hinge"/>
-        <geom name="link1" pos="0 0 0.05" size="0.03 0.03 0.05" type="box" rgba="0.8 0.2 0.2 1"/>
-        
-        <!-- 关节2 - 大臂俯仰 -->
-        <body name="joint2" pos="0 0 0.1">
-          <joint name="joint2" axis="0 1 0" pos="0 0 0" range="-1.57 1.57" type="hinge"/>
-          <geom name="link2" pos="0.05 0 0" size="0.15 0.03 0.03" type="box" rgba="0.2 0.8 0.2 1"/>
-          
-          <!-- 关节3 - 小臂俯仰 -->
-          <body name="joint3" pos="0.15 0 0">
-            <joint name="joint3" axis="0 1 0" pos="0 0 0" range="-3.14 3.14" type="hinge"/>
-            <geom name="link3" pos="0.05 0 0" size="0.1 0.03 0.03" type="box" rgba="0.2 0.2 0.8 1"/>
-            
-            <!-- 关节4 - 腕部旋转 -->
-            <body name="joint4" pos="0.1 0 0">
-              <joint name="joint4" axis="1 0 0" pos="0 0 0" range="-3.14 3.14" type="hinge"/>
-              <geom name="link4" pos="0 0 0.03" size="0.03 0.03 0.06" type="box" rgba="0.8 0.8 0.2 1"/>
-              
-              <!-- 关节5 - 腕部俯仰 -->
-              <body name="joint5" pos="0 0 0.06">
-                <joint name="joint5" axis="0 1 0" pos="0 0 0" range="-1.57 1.57" type="hinge"/>
-                <geom name="link5" pos="0 0 0.02" size="0.02 0.02 0.04" type="box" rgba="0.8 0.2 0.8 1"/>
-                
-                <!-- 关节6 - 末端旋转 -->
-                <body name="joint6" pos="0 0 0.04">
-                  <joint name="joint6" axis="0 0 1" pos="0 0 0" range="-3.14 3.14" type="hinge"/>
-                  <geom name="link6" pos="0 0 0.02" size="0.015 0.015 0.04" type="box" rgba="0.2 0.8 0.8 1"/>
-                  
-                  <!-- 末端执行器 -->
-                  <body name="end_effector" pos="0 0 0.06">
-                    <geom name="gripper_base" pos="0 0 0" size="0.02 0.02 0.02" type="box" rgba="0.5 0.5 0.5 1"/>
-                    
-                    <!-- 夹爪 -->
-                    <body name="gripper_joint" pos="0 0 0.02">
-                      <joint name="gripper" axis="0 1 0" pos="0 0 0" range="0 1.57" type="hinge"/>
-                      <geom name="gripper_left" pos="-0.01 0 0" size="0.005 0.01 0.02" type="box" rgba="0.3 0.3 0.3 1"/>
-                      <geom name="gripper_right" pos="0.01 0 0" size="0.005 0.01 0.02" type="box" rgba="0.3 0.3 0.3 1"/>
-                    </body>
+    <geom conaffinity="1" condim="3" contype="1" friction="1 .1 .1" group="2" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="500 500 0.125" type="plane" />
+    <light castshadow="false" cutoff="100" diffuse="1 1 1" dir="-0 0 -1.3" directional="true" exponent="1" pos="0 0 1.3" specular=".1 .1 .1" />
+    <body name="base_link" pos="0 0 0" quat="1 0 0 0">
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="base_link" />
+      <geom type="mesh" mesh="base_link" />
+      <body name="Link1" pos="0 0 0.1445">
+        <inertial pos="-6.25858e-05 7.92213e-05 -0.0125708" quat="0.495669 0.502153 -0.500685 0.501467" mass="0.203076" diaginertia="0.000304859 0.000235909 0.00013145" />
+        <joint name="Joint1" pos="0 0 0" axis="0 0 1" range="-2.16 2.16" actuatorfrcrange="-12 12" />
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link1" />
+        <geom type="mesh" mesh="Link1" />
+        <body name="Link2" pos="0 0 0.025106" quat="0.499998 0.5 -0.5 0.500002">
+          <inertial pos="0.152521 0.0012105 -2.60951e-05" quat="0.559299 0.425653 0.430416 0.566345" mass="0.228751" diaginertia="0.000222417 0.000139383 0.000127226" />
+          <joint name="Joint2" pos="0 0 0" axis="0 0 -1" range="-1.57 1.57" actuatorfrcrange="-12 12" />
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link2" />
+          <geom type="mesh" mesh="Link2" />
+          <body name="Link3" pos="0.22367 0.022494 -5e-05" quat="0.382681 0 0 0.923881">
+            <inertial pos="0.059121 -0.00292884 -0.00020687" quat="0.0100113 0.743852 -0.0277331 0.667694" mass="0.0902085" diaginertia="7.6497e-05 7.15699e-05 2.89138e-05" />
+            <joint name="Joint3" pos="0 0 0" axis="0 0 -1" range="-0.5 2.35619" actuatorfrcrange="-12 12" />
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link3" />
+            <geom type="mesh" mesh="Link3" />
+            <body name="Link4" pos="0.0988 0.00211 -0.0001" quat="0.499998 0.5 0.500002 0.5">
+              <inertial pos="-0.000205267 0.000325243 0.0643236" quat="0.999753 -0.018319 -0.004056 -0.0119026" mass="0.0791975" diaginertia="2.47732e-05 2.46755e-05 1.52211e-05" />
+              <joint name="Joint4" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-12 12" />
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link4" />
+              <geom type="mesh" mesh="Link4" />
+              <body name="Link5" pos="0 -0.0007 0.12011" quat="0.707105 -0.707108 0 0">
+                <inertial pos="-0.0151916 -0.0355776 0.00100363" quat="0.477111 0.435591 0.530724 0.548596" mass="0.0472227" diaginertia="1.9048e-05 1.40597e-05 1.18222e-05" />
+                <joint name="Joint5" pos="0 0 0" axis="0 0 -1" range="-1.57 1.5" actuatorfrcrange="-12 12" />
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link5" />
+                <geom type="mesh" mesh="Link5" />
+                <body name="Link6" pos="-0.0038938 -0.0573 0.0008" quat="0.707105 0.707108 0 0">
+                  <inertial pos="-0.0183097 0.00085798 0.0337757" quat="0.574888 0.563521 -0.415241 0.423701" mass="0.136803" diaginertia="8.05186e-05 7.30959e-05 3.11449e-05" />
+                  <joint name="Joint6" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14" actuatorfrcrange="-12 12" />
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link6" />
+                  <geom type="mesh" mesh="Link6" />
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Grasp_base" />
+                  <geom type="mesh" mesh="Grasp_base" />
+                  <geom size="0.005" pos="0.00275 0.0008332 0.13779" contype="0" conaffinity="0" group="1" density="0" rgba="0 1 0 1" />
+                  <body name="Link7" pos="0.00275 -0.0011661 0.13779" quat="0.716133 0.697964 0 0">
+                    <inertial pos="0.00110741 -0.0505406 0.00928375" quat="0.48495 0.518462 -0.407827 0.574194" mass="0.0243493" diaginertia="1.23445e-05 9.71575e-06 3.92783e-06" />
+                    <joint name="left_finger" pos="0 0 0" axis="0 0 -1" type="slide" range="-0.025 0" actuatorfrcrange="-5 5" />
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link7" />
+                    <geom type="mesh" mesh="Link7" />
+                  </body>
+                  <body name="Link8" pos="0.00275 0.0028325 0.13768" quat="0.697961 -0.716136 0 0">
+                    <inertial pos="0.00109597 0.0498869 0.0118635" quat="0.505733 0.498237 -0.58443 0.392982" mass="0.0243228" diaginertia="1.23098e-05 9.68264e-06 3.925e-06" />
+                    <joint name="right_finger" pos="0 0 0" axis="0 0 1" type="slide" range="0 0.025" actuatorfrcrange="-5 5" />
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="Link8" />
+                    <geom type="mesh" mesh="Link8" />
                   </body>
                 </body>
               </body>
@@ -70,24 +82,24 @@
       </body>
     </body>
   </worldbody>
-
   <actuator>
-    <motor joint="joint1" gear="100"/>
-    <motor joint="joint2" gear="100"/>
-    <motor joint="joint3" gear="100"/>
-    <motor joint="joint4" gear="100"/>
-    <motor joint="joint5" gear="100"/>
-    <motor joint="joint6" gear="100"/>
-    <motor joint="gripper" gear="50"/>
+    <motor joint="Joint1" gear="100" />
+    <motor joint="Joint2" gear="100" />
+    <motor joint="Joint3" gear="100" />
+    <motor joint="Joint4" gear="100" />
+    <motor joint="Joint5" gear="100" />
+    <motor joint="Joint6" gear="100" />
+    <position joint="left_finger" />
+    <position joint="right_finger" />
   </actuator>
-
-  <sensor>
-    <jointpos name="joint_pos" joint="joint1"/>
-    <jointpos name="joint_pos" joint="joint2"/>
-    <jointpos name="joint_pos" joint="joint3"/>
-    <jointpos name="joint_pos" joint="joint4"/>
-    <jointpos name="joint_pos" joint="joint5"/>
-    <jointpos name="joint_pos" joint="joint6"/>
-    <jointpos name="gripper_pos" joint="gripper"/>
-  </sensor>
+  <contact>
+    <exclude body1="base_link" body2="Link1" />
+    <exclude body1="Link1" body2="Link2" />
+    <exclude body1="Link2" body2="Link3" />
+    <exclude body1="Link3" body2="Link4" />
+    <exclude body1="Link4" body2="Link5" />
+    <exclude body1="Link5" body2="Link6" />
+    <exclude body1="Link6" body2="Link7" />
+    <exclude body1="Link6" body2="Link8" />
+  </contact>
 </mujoco>

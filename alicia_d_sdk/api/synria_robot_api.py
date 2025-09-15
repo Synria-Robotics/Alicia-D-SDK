@@ -40,8 +40,11 @@ class SynriaRobotAPI:
         self.servo_driver = servo_driver
         self.robot_model = robot_model
         self.ik_controller = ik_controller
-        
-        # 创建各层组件
+
+        # 先创建在线插值器 (后续硬件执行器需要引用)
+        self.online_interpolator = OnlineInterpolator(servo_driver)
+
+        # 创建执行与控制相关组件
         self.hardware_executor = HardwareExecutor(servo_driver)
         self.motion_controller = MotionController(
             servo_driver=servo_driver,
@@ -53,17 +56,16 @@ class SynriaRobotAPI:
             servo_driver=servo_driver,
             robot_model=robot_model
         )
-        
-        # 建立状态通信
-        self.state_manager.set_motion_controller(self.motion_controller)
-        self.state_manager.set_hardware_executor(self.hardware_executor)
-        self.hardware_executor.set_state_manager(self.state_manager)
-        self.hardware_executor.set_online_interpolator(self.online_interpolator)
         self.trajectory_planner = TrajectoryPlanner(
             robot_model=robot_model,
             ik_controller=ik_controller
         )
-        self.online_interpolator = OnlineInterpolator(servo_driver)
+
+        # 建立状态通信 (顺序保证所需实例均已存在)
+        self.state_manager.set_motion_controller(self.motion_controller)
+        self.state_manager.set_hardware_executor(self.hardware_executor)
+        self.hardware_executor.set_state_manager(self.state_manager)
+        self.hardware_executor.set_online_interpolator(self.online_interpolator)
         
         # 默认参数
         self.home_angles = [0.0] * 6

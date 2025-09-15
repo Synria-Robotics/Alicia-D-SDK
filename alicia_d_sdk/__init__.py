@@ -122,7 +122,7 @@ def create_session(port: str = "", baudrate: int = 1000000, debug_mode: bool = F
         'online_interpolator': online_interpolator
     }
 
-def create_simulation_robot(model_path: str = None, enable_viewer: bool = True) -> SimulationInterface:
+def create_simulation_robot(model_path: str = None, enable_viewer: bool = True, end_effector_body_name: str = None) -> SimulationInterface:
     """
     创建仿真机械臂实例
     
@@ -133,4 +133,4 @@ def create_simulation_robot(model_path: str = None, enable_viewer: bool = True) 
     Returns:
         SimulationInterface: 仿真机械臂接口实例
     """
-    return SimulationInterface(model_path=model_path, enable_viewer=enable_viewer)
+    return SimulationInterface(model_path=model_path, enable_viewer=enable_viewer, end_effector_body_name=end_effector_body_name)
