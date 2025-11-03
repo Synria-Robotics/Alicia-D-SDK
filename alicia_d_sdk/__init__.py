@@ -87,8 +87,8 @@ def create_robot(
     
     # 创建运动学层 (使用 RoboCore)
     try:
-        from synriard import urdf
-        urdf_path = getattr(getattr(urdf, f"Alicia_D_{robot_version}"), f"Alicia_D_gripper_{gripper_type}").urdf
+        from synriard import get_model_path
+        urdf_path = get_model_path("Alicia_D", version=robot_version, variant=f"gripper_{gripper_type}")
         end_link = 'tool0'
         robot_model = RobotModel(str(urdf_path), end_link=end_link)
     except ImportError:
