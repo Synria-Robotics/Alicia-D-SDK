@@ -42,7 +42,7 @@ def main(args):
         robot.set_gripper_target(command='close', wait_for_completion=True)
         time.sleep(1)
         # Test 3: Partially open
-        robot.set_gripper_target(value=80.0, wait_for_completion=True)
+        robot.set_gripper_target(command='open', wait_for_completion=True)
         time.sleep(1)
 
         

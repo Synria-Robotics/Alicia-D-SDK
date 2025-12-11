@@ -41,6 +41,7 @@ venv.bak/
 *.swp
 *.swo
 .DS_Store
+*.json
 
 logs/
 # Other

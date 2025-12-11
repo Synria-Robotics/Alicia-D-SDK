@@ -35,7 +35,7 @@ class ServoDriver:
     
     # 夹爪类型配置
     GRI_MAX_50MM = 3290
-    GRI_MAX_100MM = 3600
+    GRI_MAX_100MM = 3930
 
     CMD_ACCELERATION = 0x05 # 加速度设置
     CMD_SPEED = 0x05 # 速度设置
@@ -102,7 +102,6 @@ class ServoDriver:
             if js and max(abs(a) for a in js.angles) > 1e-3:
                 return True
             time.sleep(0.05)
-        # print(f"[超时] 未收到有效关节状态")
         return False
 
     def __del__(self):
@@ -299,7 +298,6 @@ class ServoDriver:
         frame = self._build_command_frame(self.CMD_ACCELERATION, data_list)
         # def _build_command_frame(self, cmd_id: int, data: List[int]) -> List[int]:
         # 发送加速度设置命令
-        print(frame)
         return self.serial_comm.send_data(frame)
     
 
@@ -457,7 +455,6 @@ class ServoDriver:
         # 写入夹爪值
         frame[4] = gripper_value & 0xFF  # 低字节
         frame[5] = (gripper_value >> 8) & 0xFF  # 高字节
-        
         # 计算并设置校验和
         frame[6] = self._calculate_checksum(frame)
         if self.debug_mode:
@@ -543,18 +540,11 @@ class ServoDriver:
             logger.warning(f"夹爪角度值超出范围: {value:.2f}度，会被截断")
             value = 100.0
 
-
-        if type == "50mm":
-            servo_value_limit = self.GRI_MAX_50MM
-        else:
-            servo_value_limit = self.GRI_MAX_100MM
+        servo_value_limit = self.GRI_MAX_100MM
         # 转换公式：0对应servo_value_limit(关闭)，100对应2048(打开)
         ratio = (servo_value_limit - 2048) / 100
         hw_value = int(servo_value_limit - (value * ratio))
-        
 
-        # servo_value_limit = 3290
-        # # 转换公式：0度对应2048，100度对应servo_value_limit 
         ratio = (servo_value_limit - 2048) / 100
         value = int(2048 + (angle_deg * ratio))
         
