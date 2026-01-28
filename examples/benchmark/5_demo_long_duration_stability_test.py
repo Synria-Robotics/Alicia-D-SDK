@@ -117,6 +117,12 @@ class ReadStateStabilityTest:
         self.output_format = output_format
         self.self_check_interval = self_check_interval
         
+        # 机械臂类型检测
+        # - follower (操作臂): 10个舵机 (6关节 + 4夹爪)
+        # - leader (示教臂): 6个舵机 (仅6关节，无夹爪)
+        self.robot_type: str = None
+        self.servo_count: int = 10  # 默认检查全部10个，后续根据类型调整
+        
         # 统计
         self.total_reads = 0
         self.successful_reads = 0
@@ -155,9 +161,40 @@ class ReadStateStabilityTest:
         if details:
             print(f"    详情: {details}")
 
+    def _detect_robot_type(self):
+        """
+        检测机械臂类型 (示教臂/操作臂)
+        
+        - follower (操作臂): 序列号以 ADF 开头，有10个舵机
+        - leader (示教臂): 序列号以 ADL 开头，只有6个关节舵机
+        """
+        try:
+            version = self.robot.get_robot_state("version")
+            if version:
+                serial_number = version.get("serial_number", "")
+                if serial_number.startswith("ADF"):
+                    self.robot_type = "follower"
+                    self.servo_count = 10  # 操作臂: 6关节 + 4夹爪
+                elif serial_number.startswith("ADL"):
+                    self.robot_type = "leader"
+                    self.servo_count = 6   # 示教臂: 仅6关节
+                else:
+                    self.robot_type = "unknown"
+                    self.servo_count = 6   # 未知类型默认只检查6个关节
+                
+                print(f"🤖 检测到机械臂类型: {self.robot_type} (序列号: {serial_number})")
+                print(f"🔍 将检查 {self.servo_count} 个舵机")
+        except Exception as e:
+            print(f"⚠️  无法检测机械臂类型: {e}，默认检查6个舵机")
+            self.servo_count = 6
+
     def _check_servos(self) -> bool:
         """
         执行舵机自检
+        
+        根据机械臂类型检查对应数量的舵机：
+        - 操作臂 (follower): 检查10个舵机 (bits[0-9])
+        - 示教臂 (leader): 只检查6个关节舵机 (bits[0-5])
         
         :return: True 如果所有舵机正常，False 否则
         """
@@ -181,11 +218,12 @@ class ReadStateStabilityTest:
             bits = self_check.get("bits", [])
             raw_mask = self_check.get("raw_mask", 0)
             
-            # 检查每个舵机状态
+            # 根据机械臂类型，只检查对应数量的舵机
             all_ok = True
             failed_servos = []
             
-            for i, is_ok in enumerate(bits):
+            for i in range(min(self.servo_count, len(bits))):
+                is_ok = bits[i]
                 servo_name = SERVO_NAMES.get(i, f"舵机{i}")
                 if not is_ok:
                     all_ok = False
@@ -197,8 +235,10 @@ class ReadStateStabilityTest:
                     "SERVO_ERROR",
                     f"舵机自检异常: {failed_servos}",
                     {
+                        "robot_type": self.robot_type,
+                        "servo_count": self.servo_count,
                         "raw_mask": f"0x{raw_mask:04X}",
-                        "bits": bits,
+                        "bits": bits[:self.servo_count],
                         "failed_servos": failed_servos,
                     }
                 )
@@ -207,7 +247,7 @@ class ReadStateStabilityTest:
             # 每隔一段时间打印自检成功信息
             if self.self_check_count % 12 == 1:  # 约每分钟一次（假设5秒间隔）
                 elapsed = time.time() - self.start_time
-                print(f"[{elapsed:.0f}s] ✅ 舵机自检通过 (bits: {bits})")
+                print(f"[{elapsed:.0f}s] ✅ 舵机自检通过 ({self.robot_type}, 检查{self.servo_count}个舵机)")
             
             return True
             
@@ -235,6 +275,16 @@ class ReadStateStabilityTest:
             joints = state.angles
             gripper = state.gripper
             status = state.run_status_text
+            
+            # 检查关节角度是否全为 0（异常数据）
+            # 如果所有关节角度都接近 0（阈值 0.01 弧度 ≈ 0.57°），视为异常
+            if all(abs(angle) < 0.01 for angle in joints):
+                self._log_error(
+                    "ALL_JOINTS_ZERO",
+                    "关节角度全部为 0，可能是通信或数据解析错误",
+                    {"joints_rad": list(joints), "gripper": gripper}
+                )
+                return False
             
             # 2. 获取温度 (与 03 demo 一致)
             temperature = self.robot.get_robot_state("temperature", timeout=5.0)
@@ -288,6 +338,9 @@ class ReadStateStabilityTest:
         print(f"💡 增加了舵机自检功能，检测每个舵机是否正常")
         print(f"💡 如果有任何错误会被捕获并记录")
         print(f"{'='*60}\n")
+        
+        # 检测机械臂类型
+        self._detect_robot_type()
         
         self.start_time = time.time()
         self.last_self_check_time = 0
