@@ -513,8 +513,8 @@ if __name__ == "__main__":
                         help="读取频率 FPS (默认: 3.0)")
     
     # 测试设置
-    parser.add_argument('--duration', type=float, default=1.0,
-                        help="测试时长，单位：小时 (默认: 1.0)")
+    parser.add_argument('--duration', type=float, default=12.0,
+                        help="测试时长，单位：小时 (默认: 12.0)")
     parser.add_argument('--self_check_interval', type=float, default=5.0,
                         help="舵机自检间隔，单位：秒 (默认: 5.0)")
     
