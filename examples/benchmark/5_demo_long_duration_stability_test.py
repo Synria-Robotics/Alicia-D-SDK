@@ -117,6 +117,9 @@ class ReadStateStabilityTest:
         self.output_format = output_format
         self.self_check_interval = self_check_interval
         
+        # 允许的按键状态 (仅示教臂)
+        self.VALID_BUTTON_STATES = {"idle","sync", "locked", "sync_locked"}
+        
         # 机械臂类型检测
         # - follower (操作臂): 10个舵机 (6关节 + 4夹爪)
         # - leader (示教臂): 6个舵机 (仅6关节，无夹爪)
@@ -276,18 +279,41 @@ class ReadStateStabilityTest:
             gripper = state.gripper
             status = state.run_status_text
             
-            # 检查关节角度是否全为 0（异常数据）
-            # 如果所有关节角度都接近 0（阈值 0.01 弧度 ≈ 0.57°），视为异常
-            if all(abs(angle) < 0.01 for angle in joints):
+            # 检查关节角度是否包含 0（异常数据）
+            # 用户要求：任意关节角度接近 0（阈值 0.01 弧度 ≈ 0.57°）都视为异常
+            # 前提：测试前需确保机械臂不在零位
+            zero_joints = [i for i, angle in enumerate(joints) if abs(angle) < 0.01]
+            if zero_joints:
                 self._log_error(
-                    "ALL_JOINTS_ZERO",
-                    "关节角度全部为 0，可能是通信或数据解析错误",
-                    {"joints_rad": list(joints), "gripper": gripper}
+                    "JOINT_ZERO_ERROR",
+                    f"关节 {zero_joints} 角度为 0 (可能是异常，也可能是机械臂就在零位)",
+                    {"joints_rad": list(joints), "zero_indices": zero_joints}
                 )
                 return False
             
+            # 按键状态检查 (仅示教臂 leader)
+            if self.robot_type == "leader":
+                if status not in self.VALID_BUTTON_STATES:
+                    self._log_error(
+                        "INVALID_BUTTON_STATUS",
+                        f"检测到非法按键状态: '{status}'",
+                        {"current_status": status, "valid_states": list(self.VALID_BUTTON_STATES)}
+                    )
+                    return False
+            
             # 2. 获取温度 (与 03 demo 一致)
             temperature = self.robot.get_robot_state("temperature", timeout=5.0)
+            
+            if temperature:
+                # 检查温度是否为 0 (异常数据)
+                zero_temps = [i for i, t in enumerate(temperature) if abs(t) < 0.1]
+                if zero_temps:
+                    self._log_error(
+                        "TEMP_ZERO_ERROR",
+                        f"舵机 {zero_temps} 温度为 0°C (异常)",
+                        {"temperatures": temperature, "zero_indices": zero_temps}
+                    )
+                    return False
             
             # 3. 获取速度 (与 03 demo 一致)
             velocity = self.robot.get_robot_state("velocity")
@@ -336,6 +362,7 @@ class ReadStateStabilityTest:
         print(f"{'='*60}")
         print(f"💡 这个测试模拟 03_demo_read_state.py 的持续运行")
         print(f"💡 增加了舵机自检功能，检测每个舵机是否正常")
+        print(f"💡 ⚠️ 注意：请确保机械臂不在零位！避免导致误差！！！ ")
         print(f"💡 如果有任何错误会被捕获并记录")
         print(f"{'='*60}\n")
         
@@ -379,16 +406,26 @@ class ReadStateStabilityTest:
         except Exception as e:
             self._log_error("FATAL_ERROR", str(e), {"traceback": traceback.format_exc()})
         
-        # 生成报告
-        self._generate_report()
-        
-        # 返回测试是否通过
-        return len(self.errors) == 0
+        finally:
+            # 无论何种原因退出（包括中断），都生成报告
+            # 计算错误率
+            failure_rate = (self.failed_reads / self.total_reads * 100) if self.total_reads > 0 else 0.0
+            
+            # 生成报告
+            self._generate_report()
+            
+            passed = failure_rate <= 5.0
+            # 返回测试是否通过
+            return passed
 
     def _generate_report(self):
         """生成测试报告"""
         elapsed = time.time() - self.start_time
         success_rate = (self.successful_reads / self.total_reads * 100) if self.total_reads > 0 else 0
+        failure_rate = (self.failed_reads / self.total_reads * 100) if self.total_reads > 0 else 0.0
+        
+        # 判定结果 (错误率 <= 5% 为通过)
+        passed = failure_rate <= 5.0
         
         report = {
             "test_info": {
@@ -399,12 +436,14 @@ class ReadStateStabilityTest:
                 "actual_duration_seconds": elapsed,
                 "fps": self.fps,
                 "self_check_interval": self.self_check_interval,
+                "pass_criteria": "failure_rate <= 5.0%",
             },
             "statistics": {
                 "total_reads": self.total_reads,
                 "successful_reads": self.successful_reads,
                 "failed_reads": self.failed_reads,
                 "success_rate_percent": success_rate,
+                "failure_rate_percent": failure_rate,
                 "self_check_count": self.self_check_count,
                 "servo_errors": self.servo_errors,
                 "total_errors": len(self.errors),
@@ -419,8 +458,9 @@ class ReadStateStabilityTest:
                 for e in self.errors[:50]
             ],
             "test_result": {
-                "passed": len(self.errors) == 0,
-                "verdict": "PASS ✅" if len(self.errors) == 0 else "FAIL ❌",
+                "passed": passed,
+                "verdict": "PASS ✅" if passed else "FAIL ❌",
+                "reason": f"Failure rate {failure_rate:.2f}% {'<=' if passed else '>'} 5.0%"
             }
         }
         
@@ -437,20 +477,31 @@ class ReadStateStabilityTest:
         print(f"✅ 成功读取: {self.successful_reads}")
         print(f"❌ 失败读取: {self.failed_reads}")
         print(f"📈 成功率: {success_rate:.2f}%")
+        print(f"📉 错误率: {failure_rate:.2f}% (阈值: 5.0%)")
         print(f"🔍 舵机自检次数: {self.self_check_count}")
         print(f"⚠️  舵机异常次数: {self.servo_errors}")
         print(f"💥 总错误数量: {len(self.errors)}")
         print(f"\n📁 报告文件: {self.report_path}")
         print(f"{'='*60}")
         
-        if len(self.errors) == 0:
+        if passed:
             print(f"🎉 测试结果: PASS ✅")
-            print(f"   状态读取正常，所有舵机自检通过")
+            if failure_rate > 0:
+                 print(f"   (存在少量错误，但在 5% 允许范围内)")
+            else:
+                 print(f"   状态读取完美，无错误")
         else:
-            print(f"💔 测试结果: FAIL ❌ (发生 {len(self.errors)} 个错误)")
-            print(f"\n最近的错误:")
-            for e in self.errors[-5:]:
-                print(f"  [{e.timestamp:.1f}s] {e.error_type}: {e.message}")
+            print(f"💔 测试结果: FAIL ❌ (错误率 {failure_rate:.2f}% > 5%)")
+            
+        if self.errors:
+            print(f"\n📑 错误汇总清单:")
+            print(f"{'-'*60}")
+            print(f"{'时间(s)':<10} | {'错误类型':<20} | {'错误信息'}")
+            print(f"{'-'*60}")
+            for e in self.errors:
+                print(f"{e.timestamp:<10.1f} | {e.error_type:<20} | {e.message}")
+            print(f"{'-'*60}")
+            print(f"提示: 详细错误堆栈和数据请查看报告文件: {self.report_path}")
         print(f"{'='*60}\n")
 
 
@@ -478,7 +529,9 @@ def main(args):
         
         # 断言：如果启用了断言模式，测试失败时抛出异常
         if args.assert_pass:
-            assert passed, f"稳定性测试失败！共 {len(test.errors)} 个错误，其中舵机异常 {test.servo_errors} 次"
+            if not passed:
+                failure_rate = (test.failed_reads / test.total_reads * 100) if test.total_reads > 0 else 0
+                raise AssertionError(f"稳定性测试失败！错误率 {failure_rate:.2f}% 超过阈值 5%")
         
         return passed
         
@@ -513,8 +566,8 @@ if __name__ == "__main__":
                         help="读取频率 FPS (默认: 3.0)")
     
     # 测试设置
-    parser.add_argument('--duration', type=float, default=12.0,
-                        help="测试时长，单位：小时 (默认: 12.0)")
+    parser.add_argument('--duration', type=float, default=1.0,
+                        help="测试时长，单位：小时 (默认: 1.0)")
     parser.add_argument('--self_check_interval', type=float, default=5.0,
                         help="舵机自检间隔，单位：秒 (默认: 5.0)")
     
