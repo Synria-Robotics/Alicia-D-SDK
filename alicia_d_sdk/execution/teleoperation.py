@@ -41,12 +41,17 @@ class Teleoperation:
     :param leader: Alicia-D SynriaRobotAPI instance (teaching arm)
     :param follower: Alicia-M SynriaRobotAPI instance (operation arm)
     :param frequency_hz: Control loop frequency in Hz (default: 60.0)
-    :param follower_speed_deg_s: Speed sent to follower arm in deg/s (default: 200)
+    :param follower_speed_deg_s: Speed sent to follower arm in deg/s (default: 573, ~10 rad/s)
     :param gripper_scale: Scaling factor from leader gripper to follower gripper.
         Alicia-D gripper range is 0-1000, Alicia-M is 0-100, so default is 0.1.
     :param joint_signs: Optional list of 6 sign multipliers (+1/-1) for joint direction mapping.
         Used to compensate if leader and follower have opposite joint directions.
     :param joint_offsets_rad: Optional list of 6 radian offsets added to leader joints.
+    :param use_mit: If True, use MIT position mode instead of PV mode for follower control.
+    :param mit_kp_large: MIT Kp for joints 1-3 (default: 150.0, range 0~500)
+    :param mit_kd_large: MIT Kd for joints 1-3 (default: 2.0, range 0~5)
+    :param mit_kp_small: MIT Kp for joints 4-7 (default: 20.0, range 0~500)
+    :param mit_kd_small: MIT Kd for joints 4-7 (default: 1.0, range 0~5)
     """
 
     def __init__(
@@ -54,10 +59,15 @@ class Teleoperation:
         leader,
         follower,
         frequency_hz: float = 60.0,
-        follower_speed_deg_s: float = 200,
+        follower_speed_deg_s: float = 573.0,
         gripper_scale: float = 0.1,
         joint_signs: Optional[List[float]] = None,
         joint_offsets_rad: Optional[List[float]] = None,
+        use_mit: bool = False,
+        mit_kp_large: float = 150.0,
+        mit_kd_large: float = 2.0,
+        mit_kp_small: float = 20.0,
+        mit_kd_small: float = 1.0,
     ):
         self.leader = leader
         self.follower = follower
@@ -66,12 +76,20 @@ class Teleoperation:
         self.gripper_scale = gripper_scale
         self.joint_signs = joint_signs or [1.0] * 6
         self.joint_offsets_rad = joint_offsets_rad or [0.0] * 6
+        self.use_mit = use_mit
+        self.mit_kp_large = mit_kp_large
+        self.mit_kd_large = mit_kd_large
+        self.mit_kp_small = mit_kp_small
+        self.mit_kd_small = mit_kd_small
 
         self._running = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._on_state_callback: Optional[Callable] = None
         self._loop_count = 0
         self._error_count = 0
+
+        # MIT模式下使用的control_mode常量（延迟获取，避免import依赖）
+        self._mit_control_mode = None
 
     def set_state_callback(self, callback: Callable):
         """Register a callback invoked each loop with (leader_joints, leader_gripper, loop_count).
@@ -104,7 +122,8 @@ class Teleoperation:
         interval = 1.0 / self.frequency_hz
         spin_threshold = 0.002 if interval <= 0.010 else 0.010
 
-        logger.info(f"Teleoperation loop started at {self.frequency_hz} Hz")
+        mode_str = "MIT_POSITION" if self.use_mit else "PV"
+        logger.info(f"Teleoperation loop started at {self.frequency_hz} Hz ({mode_str} mode)")
 
         while self._running.is_set():
             loop_start = time.perf_counter()
@@ -117,13 +136,25 @@ class Teleoperation:
                 follower_joints = self._map_joints(state.angles)
                 follower_gripper = self._map_gripper(state.gripper)
 
-                self.follower.set_robot_state(
-                    target_joints=follower_joints,
-                    gripper_value=follower_gripper,
-                    joint_format='rad',
-                    speed_deg_s=self.follower_speed_deg_s,
-                    wait_for_completion=False,
-                )
+                if self.use_mit and self._mit_control_mode is not None:
+                    self.follower.set_robot_state(
+                        target_joints=follower_joints,
+                        gripper_value=follower_gripper,
+                        joint_format='rad',
+                        speed_deg_s=0,
+                        gripper_speed_deg_s=0,
+                        wait_for_completion=False,
+                        control_mode=self._mit_control_mode,
+                    )
+                else:
+                    self.follower.set_robot_state(
+                        target_joints=follower_joints,
+                        gripper_value=follower_gripper,
+                        joint_format='rad',
+                        speed_deg_s=self.follower_speed_deg_s,
+                        gripper_speed_deg_s=self.follower_speed_deg_s,
+                        wait_for_completion=False,
+                    )
 
                 self._loop_count += 1
                 if self._on_state_callback:
@@ -141,6 +172,27 @@ class Teleoperation:
 
         logger.info(f"Teleoperation loop stopped (sent {self._loop_count} commands, {self._error_count} errors)")
 
+    def _init_mit_mode(self):
+        """Initialize MIT mode on the follower arm."""
+        servo_driver = self.follower.servo_driver
+        self._mit_control_mode = servo_driver.PATTERN_MIT_POSITION
+
+        logger.info("Initializing follower MIT mode...")
+        servo_driver.initialize_mit_mode(
+            control_aim=servo_driver.default_control_aim,
+            kp_large=self.mit_kp_large,
+            kd_large=self.mit_kd_large,
+            kp_small=self.mit_kp_small,
+            kd_small=self.mit_kd_small,
+        )
+        logger.info("✓ Follower MIT mode initialized")
+
+    def _exit_mit_mode(self):
+        """Switch follower back to PV mode."""
+        servo_driver = self.follower.servo_driver
+        logger.info("Switching follower back to PV mode...")
+        servo_driver.switch_control_mode('pv', control_aim=servo_driver.default_control_aim)
+
     def start(self):
         """Start teleoperation in a background thread.
 
@@ -150,6 +202,10 @@ class Teleoperation:
         if self._running.is_set():
             logger.warning("Teleoperation is already running")
             return
+
+        # MIT模式初始化
+        if self.use_mit:
+            self._init_mit_mode()
 
         logger.info("Disabling leader arm torque for free movement...")
         self.leader.torque_control('off')
@@ -169,6 +225,10 @@ class Teleoperation:
         if self._thread:
             self._thread.join(timeout=2.0)
             self._thread = None
+
+        # MIT模式退出：切回PV
+        if self.use_mit:
+            self._exit_mit_mode()
 
         logger.info("Re-enabling leader arm torque...")
         self.leader.torque_control('on')

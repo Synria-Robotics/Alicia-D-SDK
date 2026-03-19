@@ -89,6 +89,7 @@ def main(args):
         frequency_hz=args.frequency,
         follower_speed_deg_s=args.speed,
         joint_signs=[1.0, 1.0, -1.0, -1.0, 1.0, -1.0],
+        use_mit=args.mit,
     )
 
     if args.verbose:
@@ -98,7 +99,8 @@ def main(args):
                 print(f"  [{count:6d}] joints={deg}  gripper={gripper:.0f}")
         teleop.set_state_callback(print_state)
 
-    beauty_print(f"Starting teleoperation at {args.frequency} Hz (speed={args.speed} deg/s)", type="module")
+    mode_str = "MIT" if args.mit else f"PV (speed={args.speed} deg/s)"
+    beauty_print(f"Starting teleoperation at {args.frequency} Hz ({mode_str})", type="module")
     beauty_print("Drag the leader arm (Alicia-D) to control the follower arm (Alicia-M)")
     beauty_print("Press Enter or Ctrl+C to stop\n")
 
@@ -125,10 +127,12 @@ if __name__ == "__main__":
                         help="Alicia-M version (default: v1_1)")
     parser.add_argument('--frequency', type=float, default=60.0,
                         help="Control loop frequency in Hz (default: 60)")
-    parser.add_argument('--speed', type=float, default=200.0,
-                        help="Follower joint speed in deg/s (default: 200)")
+    parser.add_argument('--speed', type=float, default=573.0,
+                        help="Follower joint speed in deg/s (default: 573, ~10 rad/s for real-time following)")
     parser.add_argument('--skip-home', action='store_true',
                         help="Skip moving follower to home position before starting")
+    parser.add_argument('--mit', action='store_true',
+                        help="Use MIT position mode instead of PV mode (better real-time tracking)")
     parser.add_argument('--verbose', '-v', action='store_true',
                         help="Print joint states during teleoperation")
 
