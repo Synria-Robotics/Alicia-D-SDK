@@ -173,25 +173,30 @@ class Teleoperation:
         logger.info(f"Teleoperation loop stopped (sent {self._loop_count} commands, {self._error_count} errors)")
 
     def _init_mit_mode(self):
-        """Initialize MIT mode on the follower arm."""
+        """Initialize MIT mode on the follower arm.
+
+        假定硬件已通过按键切换到MIT模式，仅发送Kp/Kd参数配置PD控制器。
+        """
         servo_driver = self.follower.servo_driver
         self._mit_control_mode = servo_driver.PATTERN_MIT_POSITION
 
-        logger.info("Initializing follower MIT mode...")
+        logger.info("Initializing follower MIT parameters (hardware already in MIT mode)...")
         servo_driver.initialize_mit_mode(
             control_aim=servo_driver.default_control_aim,
             kp_large=self.mit_kp_large,
             kd_large=self.mit_kd_large,
             kp_small=self.mit_kp_small,
             kd_small=self.mit_kd_small,
+            skip_mode_switch=True,
         )
-        logger.info("✓ Follower MIT mode initialized")
+        logger.info("✓ Follower MIT parameters initialized")
 
     def _exit_mit_mode(self):
-        """Switch follower back to PV mode."""
-        servo_driver = self.follower.servo_driver
-        logger.info("Switching follower back to PV mode...")
-        servo_driver.switch_control_mode('pv', control_aim=servo_driver.default_control_aim)
+        """MIT模式退出处理。
+
+        不切换回PV模式，保持硬件在MIT模式（与硬件按键切换逻辑一致）。
+        """
+        logger.info("Teleoperation stopped (staying in MIT mode)")
 
     def start(self):
         """Start teleoperation in a background thread.

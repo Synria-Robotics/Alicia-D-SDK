@@ -60,7 +60,9 @@ def main(args):
 
     # --- Connect follower (Alicia-M operation arm) ---
     beauty_print("Connecting follower arm (Alicia-M)...", type="info")
-    follower = alicia_m_sdk.create_robot(port=args.follower_port, version=args.follower_version)
+    follower_control_mode = 'mit' if args.mit else None
+    follower = alicia_m_sdk.create_robot(port=args.follower_port, version=args.follower_version,
+                                         control_mode=follower_control_mode)
     if not follower.is_connected():
         beauty_print("Failed to connect follower arm", type="error")
         leader.disconnect()
