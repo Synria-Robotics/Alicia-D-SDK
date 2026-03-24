@@ -178,7 +178,7 @@ class Teleoperation:
         假定硬件已通过按键切换到MIT模式，仅发送Kp/Kd参数配置PD控制器。
         """
         servo_driver = self.follower.servo_driver
-        self._mit_control_mode = servo_driver.PATTERN_MIT_POSITION
+        self._mit_control_mode = servo_driver.PATTERN_MIT
 
         logger.info("Initializing follower MIT parameters (hardware already in MIT mode)...")
         servo_driver.initialize_mit_mode(
