@@ -23,6 +23,7 @@ Uses Alicia-D (servo teaching arm) as leader to control
 Alicia-M (motor operation arm) as follower in real-time.
 """
 
+import inspect
 import time
 import threading
 import numpy as np
@@ -43,7 +44,7 @@ class Teleoperation:
     :param frequency_hz: Control loop frequency in Hz (default: 60.0)
     :param follower_speed_deg_s: Speed sent to follower arm in deg/s (default: 573, ~10 rad/s)
     :param gripper_scale: Scaling factor from leader gripper to follower gripper.
-        Alicia-D gripper range is 0-1000, Alicia-M is 0-100, so default is 0.1.
+        Both Alicia-D and current Alicia-M SDKs use a 0-1000 gripper range, so default is 1.0.
     :param joint_signs: Optional list of 6 sign multipliers (+1/-1) for joint direction mapping.
         Used to compensate if leader and follower have opposite joint directions.
     :param joint_offsets_rad: Optional list of 6 radian offsets added to leader joints.
@@ -60,7 +61,7 @@ class Teleoperation:
         follower,
         frequency_hz: float = 60.0,
         follower_speed_deg_s: float = 573.0,
-        gripper_scale: float = 0.1,
+        gripper_scale: float = 1.0,
         joint_signs: Optional[List[float]] = None,
         joint_offsets_rad: Optional[List[float]] = None,
         use_mit: bool = False,
@@ -87,6 +88,7 @@ class Teleoperation:
         self._on_state_callback: Optional[Callable] = None
         self._loop_count = 0
         self._error_count = 0
+        self._follower_set_robot_state_params = inspect.signature(self.follower.set_robot_state).parameters
 
         # MIT模式下使用的control_mode常量（延迟获取，避免import依赖）
         self._mit_control_mode = None
@@ -113,9 +115,34 @@ class Teleoperation:
         """Map leader gripper value to follower gripper range.
 
         :param leader_gripper: Leader gripper value (0-1000)
-        :return: Follower gripper value (0-100)
+        :return: Follower gripper value (0-1000)
         """
-        return max(0.0, min(100.0, leader_gripper * self.gripper_scale))
+        return max(0.0, min(1000.0, leader_gripper * self.gripper_scale))
+
+    def _follower_set_robot_state(self, target_joints, gripper_value, wait_for_completion=False):
+        """Call follower.set_robot_state() with Alicia-M SDK-compatible keyword names."""
+        kwargs = {
+            "target_joints": target_joints,
+            "gripper_value": gripper_value,
+            "joint_format": "rad",
+            "wait_for_completion": wait_for_completion,
+        }
+
+        parameters = self._follower_set_robot_state_params
+
+        speed_key = "speed" if "speed" in parameters else "speed_deg_s"
+        gripper_speed_key = "gripper_speed" if "gripper_speed" in parameters else "gripper_speed_deg_s"
+
+        if self.use_mit and self._mit_control_mode is not None:
+            kwargs[speed_key] = 0
+            kwargs[gripper_speed_key] = 0
+            if "control_mode" in parameters:
+                kwargs["control_mode"] = self._mit_control_mode
+        else:
+            kwargs[speed_key] = self.follower_speed_deg_s
+            kwargs[gripper_speed_key] = self.follower_speed_deg_s
+
+        self.follower.set_robot_state(**kwargs)
 
     def _control_loop(self):
         """Main teleoperation control loop running in background thread."""
@@ -136,25 +163,11 @@ class Teleoperation:
                 follower_joints = self._map_joints(state.angles)
                 follower_gripper = self._map_gripper(state.gripper)
 
-                if self.use_mit and self._mit_control_mode is not None:
-                    self.follower.set_robot_state(
-                        target_joints=follower_joints,
-                        gripper_value=follower_gripper,
-                        joint_format='rad',
-                        speed_deg_s=0,
-                        gripper_speed_deg_s=0,
-                        wait_for_completion=False,
-                        control_mode=self._mit_control_mode,
-                    )
-                else:
-                    self.follower.set_robot_state(
-                        target_joints=follower_joints,
-                        gripper_value=follower_gripper,
-                        joint_format='rad',
-                        speed_deg_s=self.follower_speed_deg_s,
-                        gripper_speed_deg_s=self.follower_speed_deg_s,
-                        wait_for_completion=False,
-                    )
+                self._follower_set_robot_state(
+                    target_joints=follower_joints,
+                    gripper_value=follower_gripper,
+                    wait_for_completion=False,
+                )
 
                 self._loop_count += 1
                 if self._on_state_callback:

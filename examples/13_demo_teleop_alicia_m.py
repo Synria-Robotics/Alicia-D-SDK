@@ -40,15 +40,55 @@ Usage:
 """
 
 import argparse
+import builtins
+from datetime import datetime
+import threading
+import time
 import numpy as np
 
 import alicia_d_sdk
 import alicia_m_sdk
-from alicia_d_sdk.execution.teleoperation import Teleoperation
+from alicia_d_sdk.utils import precise_sleep
 from robocore.utils.beauty_logger import beauty_print
 
 
+def install_timestamped_print():
+    """Prefix all print output with a local timestamp."""
+    original_print = builtins.print
+
+    def timestamped_print(*args, **kwargs):
+        sep = kwargs.get("sep", " ")
+        end = kwargs.get("end", "\n")
+        file = kwargs.get("file", None)
+        flush = kwargs.get("flush", False)
+
+        message = sep.join(str(arg) for arg in args)
+        timestamp = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}]"
+        original_print(f"{timestamp} {message}", end=end, file=file, flush=flush)
+
+    builtins.print = timestamped_print
+
+
+def map_joints(leader_joints):
+    joint_signs = [1.0, 1.0, -1.0, -1.0, 1.0, -1.0]
+    return [sign * angle for angle, sign in zip(leader_joints, joint_signs)]
+
+
+def map_gripper(leader_gripper):
+    return max(0.0, min(1000.0, float(leader_gripper)))
+
+
+def wait_for_enter(stop_event):
+    try:
+        input("\nTeleoperation active. Press Enter to stop...\n")
+    except KeyboardInterrupt:
+        print()
+    finally:
+        stop_event.set()
+
+
 def main(args):
+    install_timestamped_print()
     beauty_print("Teleoperation: Alicia-D → Alicia-M", type="module")
 
     # --- Connect leader (Alicia-D teaching arm) ---
@@ -81,34 +121,61 @@ def main(args):
     # --- Optional: move follower to home first ---
     if not args.skip_home:
         beauty_print("Moving follower to home position...", type="info")
-        follower.go_home(speed_deg_s=20)
+        follower.go_home(speed=20)
         beauty_print("Follower at home position", type="success")
-
-    # --- Create and run teleoperation ---
-    teleop = Teleoperation(
-        leader=leader,
-        follower=follower,
-        frequency_hz=args.frequency,
-        follower_speed_deg_s=args.speed,
-        joint_signs=[1.0, 1.0, -1.0, -1.0, 1.0, -1.0],
-        use_mit=args.mit,
-    )
-
-    if args.verbose:
-        def print_state(joints, gripper, count):
-            if count % int(args.frequency) == 0:  # print once per second
-                deg = np.round(np.degrees(joints), 1).tolist()
-                print(f"  [{count:6d}] joints={deg}  gripper={gripper:.0f}")
-        teleop.set_state_callback(print_state)
 
     mode_str = "MIT" if args.mit else f"PV (speed={args.speed} deg/s)"
     beauty_print(f"Starting teleoperation at {args.frequency} Hz ({mode_str})", type="module")
     beauty_print("Drag the leader arm (Alicia-D) to control the follower arm (Alicia-M)")
     beauty_print("Press Enter or Ctrl+C to stop\n")
 
+    follower_comm_manager = getattr(follower.servo_driver, "comm_manager", None)
+    if follower_comm_manager is not None:
+        follower_comm_manager.disable_auto_query()
+        beauty_print("Disabled follower auto query during teleoperation", type="info")
+
+    stop_event = threading.Event()
+    input_thread = threading.Thread(target=wait_for_enter, args=(stop_event,), daemon=True)
+
     try:
-        teleop.run_interactive()
+        beauty_print("Disabling leader arm torque for free movement...", type="info")
+        input_thread.start()
+
+        interval = 1.0 / args.frequency
+        spin_threshold = 0.002 if interval <= 0.010 else 0.010
+        loop_count = 0
+        speed = 0 if args.mit else args.speed
+
+        while not stop_event.is_set():
+            loop_start = time.perf_counter()
+
+            state = leader.get_robot_state("joint_gripper")
+            if state is None or state.angles is None:
+                precise_sleep(interval, spin_threshold=spin_threshold)
+                continue
+
+            follower.set_robot_state(
+                target_joints=map_joints(state.angles),
+                gripper_value=map_gripper(state.gripper),
+                joint_format='rad',
+                speed=speed,
+                gripper_speed=speed,
+                wait_for_completion=False,
+            )
+
+            loop_count += 1
+            if args.verbose and loop_count % max(1, int(args.frequency)) == 0:
+                deg = np.round(np.degrees(state.angles), 1).tolist()
+                print(f"  [{loop_count:6d}] joints={deg}  gripper={state.gripper:.0f}")
+
+            elapsed = time.perf_counter() - loop_start
+            precise_sleep(interval - elapsed, spin_threshold=spin_threshold)
+    except KeyboardInterrupt:
+        print()
     finally:
+        stop_event.set()
+        beauty_print("Re-enabling leader arm torque...", type="info")
+        leader.torque_control('on')
         beauty_print("Disconnecting...", type="info")
         leader.disconnect()
         follower.disconnect()
