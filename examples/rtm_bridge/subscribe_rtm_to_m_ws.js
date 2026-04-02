@@ -25,6 +25,7 @@ function parseCli() {
       'follower-ws': { type: 'string' },
       'speed': { type: 'string', default: '573' },
       'execute-frequency': { type: 'string', default: '50' },
+      'interp-alpha': { type: 'string', default: '0.35' },
       'no-wait-ok': { type: 'boolean', default: false },
       'recv-csv': { type: 'string', default: 'rtm_received.csv' },
       'send-csv': { type: 'string', default: 'm_commands.csv' },
@@ -38,7 +39,7 @@ function parseCli() {
 
   if (values.help || !values['follower-ws']) {
     console.log(`Usage:
-  node subscribe_rtm_to_m_ws.js --follower-ws ws://localhost:8000/robots/ws//dev/cu.xxx [--app-id ${DEFAULT_APP_ID}] [--channel alicia-teleop] [--topic teleop] [--speed 573] [--execute-frequency 50] [--no-wait-ok] [--recv-csv rtm_received.csv] [--send-csv m_commands.csv] [--chrome "${DEFAULT_CHROME_PATH}"] [--rtm-user-id m-subscriber] [--rtm-token <token>] [--headed] [--verbose]`);
+  node subscribe_rtm_to_m_ws.js --follower-ws ws://localhost:8000/robots/ws//dev/cu.xxx [--app-id ${DEFAULT_APP_ID}] [--channel alicia-teleop] [--topic teleop] [--speed 573] [--execute-frequency 50] [--interp-alpha 0.35] [--no-wait-ok] [--recv-csv rtm_received.csv] [--send-csv m_commands.csv] [--chrome "${DEFAULT_CHROME_PATH}"] [--rtm-user-id m-subscriber] [--rtm-token <token>] [--headed] [--verbose]`);
     process.exit(values.help ? 0 : 1);
   }
 
@@ -51,6 +52,7 @@ function parseCli() {
     followerWs: values['follower-ws'],
     speed: Number(values.speed),
     executeFrequency: Number(values['execute-frequency']),
+    interpAlpha: Number(values['interp-alpha']),
     noWaitOk: values['no-wait-ok'],
     recvCsv: values['recv-csv'],
     sendCsv: values['send-csv'],
@@ -65,6 +67,9 @@ async function main() {
   const followerDeviceId = extractDeviceIdFromWsUrl(args.followerWs);
   const recvCsvPath = args.recvCsv;
   const sendCsvPath = args.sendCsv;
+  if (!(args.interpAlpha > 0 && args.interpAlpha <= 1)) {
+    throw new Error(`Invalid interp alpha: ${args.interpAlpha}. Expected 0 < alpha <= 1.`);
+  }
 
   fs.writeFileSync(
     recvCsvPath,
@@ -80,6 +85,7 @@ async function main() {
   log(`RTM channel: ${args.channel}`);
   log(`RTM topic: ${args.topic}`);
   log(`Execute tick frequency: ${args.executeFrequency} Hz`);
+  log(`Interpolation alpha: ${args.interpAlpha}`);
   log(`Wait for movej.ok: ${args.noWaitOk ? 'no' : 'yes'}`);
   log(`Receive CSV: ${recvCsvPath}`);
   log(`Send CSV: ${sendCsvPath}`);
@@ -130,6 +136,7 @@ async function main() {
 
     const mapJoints = (leaderJointsDeg) => leaderJointsDeg.slice(0, 6).map((value, index) => value * jointSigns[index]);
     const clampGripper = (value) => Math.max(0, Math.min(1000, Number(value ?? 0)));
+    const lerp = (current, target, alpha) => current + (target - current) * alpha;
 
     class JsonWsClient {
       constructor(url, label) {
@@ -235,6 +242,8 @@ async function main() {
     let executedSeq = -1;
     let lastVerboseAt = 0;
     let lastRecvLogAt = 0;
+    let lastCommandJoints = null;
+    let lastCommandGripper = null;
     const intervalMs = 1000 / cfg.executeFrequency;
     let nextTickAt = performance.now();
     const maxQueueSize = 2000;
@@ -306,10 +315,19 @@ async function main() {
         log(`Seq gap before execute: prev=${executedSeq} current=${frame.seq}`);
       }
 
+      const targetJoints = mapJoints(frame.joints_deg || []);
+      const targetGripper = clampGripper(frame.gripper);
+      const interpolatedJoints = lastCommandJoints
+        ? targetJoints.map((value, index) => lerp(lastCommandJoints[index], value, cfg.interpAlpha))
+        : targetJoints;
+      const interpolatedGripper = lastCommandGripper === null
+        ? targetGripper
+        : lerp(lastCommandGripper, targetGripper, cfg.interpAlpha);
+
       const followerCmd = {
         type: 'cmd.movej',
-        joints_deg: mapJoints(frame.joints_deg || []),
-        gripper: clampGripper(frame.gripper),
+        joints_deg: interpolatedJoints,
+        gripper: clampGripper(interpolatedGripper),
         speed: cfg.speed,
       };
       const sendTimeMs = Date.now();
@@ -330,6 +348,8 @@ async function main() {
       }
 
       executedSeq = frame.seq;
+      lastCommandJoints = followerCmd.joints_deg.slice();
+      lastCommandGripper = followerCmd.gripper;
       if (cfg.verbose && Date.now() - lastVerboseAt >= 1000) {
         lastVerboseAt = Date.now();
         log(`executed seq=${executedSeq} queued=${executeQueue.length} dropped=${droppedFrames} joints=${JSON.stringify(followerCmd.joints_deg)} gripper=${Math.round(followerCmd.gripper)} speed=${cfg.speed}`);
@@ -349,6 +369,7 @@ async function main() {
     followerWs: args.followerWs,
     speed: args.speed,
     executeFrequency: args.executeFrequency,
+    interpAlpha: args.interpAlpha,
     noWaitOk: args.noWaitOk,
     verbose: args.verbose,
   });
