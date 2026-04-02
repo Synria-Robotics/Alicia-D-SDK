@@ -1,5 +1,6 @@
 import path from 'node:path';
 import http from 'node:http';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_APP_ID = '54f9b64b82204d74b35e3b9c5430a020';
@@ -55,6 +56,23 @@ export async function connectDeviceViaRest(wsUrl, armType) {
 
 export function resolveAgoraRtmScriptPath() {
   return path.join(__dirname, 'node_modules', 'agora-rtm', 'agora-rtm.js');
+}
+
+export function resolveAgoraRtcScriptPath() {
+  const base = path.join(__dirname, 'node_modules', 'agora-rtc-sdk-ng');
+  const candidates = [
+    path.join(base, 'AgoraRTC_N-production.js'),
+    path.join(base, 'AgoraRTC_N.js'),
+    path.join(base, 'AgoraRTC_N-4.23.0.js'),
+    path.join(base, 'AgoraRTC_N-4.23.1.js'),
+    path.join(base, 'AgoraRTC_N-4.24.0.js'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(`AgoraRTC script not found. Ensure agora-rtc-sdk-ng is installed in ${base}`);
 }
 
 export async function createBrowserHostServer() {

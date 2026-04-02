@@ -23,6 +23,8 @@ cd examples/rtm_bridge
 npm install
 ```
 
+This installs both `agora-rtm` and its peer dependency `agora-rtc-sdk-ng` (required for Stream Channel).
+
 ## Run publisher
 
 ```bash
@@ -31,7 +33,9 @@ node publish_d_ws_to_rtm.js \
   --app-id 54f9b64b82204d74b35e3b9c5430a020 \
   --leader-ws ws://localhost:8000/robots/ws//dev/cu.usbmodem5B7B0460781 \
   --channel alicia-teleop \
+  --topic teleop \
   --frequency 50 \
+  --send-frequency 50 \
   --verbose
 ```
 
@@ -43,6 +47,7 @@ node subscribe_rtm_to_m_ws.js \
   --app-id 54f9b64b82204d74b35e3b9c5430a020 \
   --follower-ws ws://localhost:8000/robots/ws//dev/cu.usbmodem5B7A1009171 \
   --channel alicia-teleop \
+  --topic teleop \
   --speed 573 \
   --execute-frequency 50 \
   --recv-csv rtm_received.csv \
@@ -71,9 +76,9 @@ Or pass `--rtm-token <token>`.
 
 ## Notes
 
-- This implementation uses RTM Message Channel.
+- This implementation uses RTM Stream Channel + topic.
 - Recommended configuration is fixed `50 Hz` publish and fixed `50 Hz` execute.
-- The publisher samples leader state into a FIFO queue at fixed `50 Hz`, and RTM sends from that queue.
+- The publisher samples leader state into a FIFO queue at fixed `50 Hz`, and RTM sends from that queue at fixed `50 Hz`.
 - The subscriber pushes RTM messages into a FIFO queue immediately, and the executor consumes that queue at fixed `50 Hz`.
 - `seq` is still recorded and checked; gaps are logged before execution.
 - If follower execution is slower than input rate, queue latency will accumulate instead of skipping ahead.

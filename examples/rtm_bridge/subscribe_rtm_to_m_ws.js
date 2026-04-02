@@ -10,6 +10,7 @@ import {
   connectDeviceViaRest,
   extractDeviceIdFromWsUrl,
   log,
+  resolveAgoraRtcScriptPath,
   resolveAgoraRtmScriptPath,
 } from './common.js';
 
@@ -20,9 +21,11 @@ function parseCli() {
       'rtm-user-id': { type: 'string', default: `m-subscriber-${Date.now()}` },
       'rtm-token': { type: 'string', default: process.env.AGORA_RTM_TOKEN ?? '' },
       'channel': { type: 'string', default: 'alicia-teleop' },
+      'topic': { type: 'string', default: 'teleop' },
       'follower-ws': { type: 'string' },
       'speed': { type: 'string', default: '573' },
       'execute-frequency': { type: 'string', default: '50' },
+      'no-wait-ok': { type: 'boolean', default: false },
       'recv-csv': { type: 'string', default: 'rtm_received.csv' },
       'send-csv': { type: 'string', default: 'm_commands.csv' },
       'chrome': { type: 'string', default: DEFAULT_CHROME_PATH },
@@ -35,7 +38,7 @@ function parseCli() {
 
   if (values.help || !values['follower-ws']) {
     console.log(`Usage:
-  node subscribe_rtm_to_m_ws.js --follower-ws ws://localhost:8000/robots/ws//dev/cu.xxx [--app-id ${DEFAULT_APP_ID}] [--channel alicia-teleop] [--speed 573] [--execute-frequency 50] [--recv-csv rtm_received.csv] [--send-csv m_commands.csv] [--chrome "${DEFAULT_CHROME_PATH}"] [--rtm-user-id m-subscriber] [--rtm-token <token>] [--headed] [--verbose]`);
+  node subscribe_rtm_to_m_ws.js --follower-ws ws://localhost:8000/robots/ws//dev/cu.xxx [--app-id ${DEFAULT_APP_ID}] [--channel alicia-teleop] [--topic teleop] [--speed 573] [--execute-frequency 50] [--no-wait-ok] [--recv-csv rtm_received.csv] [--send-csv m_commands.csv] [--chrome "${DEFAULT_CHROME_PATH}"] [--rtm-user-id m-subscriber] [--rtm-token <token>] [--headed] [--verbose]`);
     process.exit(values.help ? 0 : 1);
   }
 
@@ -44,9 +47,11 @@ function parseCli() {
     rtmUserId: values['rtm-user-id'],
     rtmToken: values['rtm-token'] || undefined,
     channel: values.channel,
+    topic: values.topic,
     followerWs: values['follower-ws'],
     speed: Number(values.speed),
     executeFrequency: Number(values['execute-frequency']),
+    noWaitOk: values['no-wait-ok'],
     recvCsv: values['recv-csv'],
     sendCsv: values['send-csv'],
     chrome: values.chrome,
@@ -73,7 +78,9 @@ async function main() {
   log('Subscriber start');
   log(`Follower device: ${followerDeviceId}`);
   log(`RTM channel: ${args.channel}`);
+  log(`RTM topic: ${args.topic}`);
   log(`Execute tick frequency: ${args.executeFrequency} Hz`);
+  log(`Wait for movej.ok: ${args.noWaitOk ? 'no' : 'yes'}`);
   log(`Receive CSV: ${recvCsvPath}`);
   log(`Send CSV: ${sendCsvPath}`);
 
@@ -113,6 +120,7 @@ async function main() {
   });
 
   await page.goto(hostServer.url);
+  await page.addScriptTag({ path: resolveAgoraRtcScriptPath() });
   await page.addScriptTag({ path: resolveAgoraRtmScriptPath() });
 
   await page.evaluate(async (cfg) => {
@@ -189,8 +197,14 @@ async function main() {
     }
     log(`Follower websocket connected: ${hello.device_id}`);
 
-    const { RTM, VERSION } = window.AgoraRTM;
+    const { RTM, VERSION, setParameter } = window.AgoraRTM;
     log(`Agora RTM SDK version: ${VERSION}`);
+    try {
+      setParameter('RTM2_ENABLED', 'true');
+      log('RTM parameter set: RTM2_ENABLED=true');
+    } catch (error) {
+      log(`RTM setParameter failed: ${error?.message || error}`);
+    }
 
     const rtm = new RTM(cfg.appId, cfg.rtmUserId, { logLevel: 'warn' });
     rtm.addEventListener('status', (event) => {
@@ -201,20 +215,41 @@ async function main() {
     });
 
     await rtm.login(cfg.rtmToken ? { token: cfg.rtmToken } : {});
-    await rtm.subscribe(cfg.channel, { withMessage: true, withPresence: false });
-    log(`RTM login+subscribe OK: ${cfg.rtmUserId}`);
+    let useStream = false;
+    try {
+      const streamChannel = rtm.createStreamChannel(cfg.channel);
+      await streamChannel.join({ withPresence: false, withMetadata: false, withLock: false });
+      await streamChannel.joinTopic(cfg.topic, { meta: '' });
+      await streamChannel.subscribeTopic(cfg.topic, { users: [] });
+      log(`RTM login+stream subscribe OK: ${cfg.rtmUserId}`);
+      useStream = true;
+    } catch (error) {
+      log(`RTM stream unavailable, falling back to message channel: ${error?.message || error}`);
+      await rtm.subscribe(cfg.channel, { withMessage: true, withPresence: false });
+      log(`RTM login+subscribe OK: ${cfg.rtmUserId}`);
+    }
 
     const executeQueue = [];
     let lastQueuedSeq = -1;
     let droppedFrames = 0;
     let executedSeq = -1;
     let lastVerboseAt = 0;
+    let lastRecvLogAt = 0;
     const intervalMs = 1000 / cfg.executeFrequency;
     let nextTickAt = performance.now();
     const maxQueueSize = 2000;
 
     rtm.addEventListener('message', (event) => {
       if (event.channelName !== cfg.channel) {
+        return;
+      }
+      const isStream = event.channelType === 'STREAM' || event.channelType === 2;
+      const isMessage = event.channelType === 'MESSAGE' || event.channelType === 1;
+      if (useStream) {
+        if (!isStream || event.topicName !== cfg.topic) {
+          return;
+        }
+      } else if (!isMessage) {
         return;
       }
       try {
@@ -228,6 +263,10 @@ async function main() {
           return;
         }
         const recvTimeMs = Date.now();
+        if (cfg.verbose && recvTimeMs - lastRecvLogAt >= 1000) {
+          lastRecvLogAt = recvTimeMs;
+          log(`recv seq=${payload.seq} queued=${executeQueue.length} channelType=${event.channelType} topic=${event.topicName || ''}`);
+        }
         payload.recv_time_ms = recvTimeMs;
         if (executeQueue.length >= maxQueueSize) {
           executeQueue.shift();
@@ -283,9 +322,11 @@ async function main() {
       ].join(','));
 
       await followerWs.send(followerCmd);
-      const reply = await followerWs.waitFor((msg) => msg.type === 'movej.ok' || msg.type === 'movej.error' || msg.type === 'error', 3000);
-      if (reply.type !== 'movej.ok') {
-        log(`Follower move error: ${JSON.stringify(reply)}`);
+      if (!cfg.noWaitOk) {
+        const reply = await followerWs.waitFor((msg) => msg.type === 'movej.ok' || msg.type === 'movej.error' || msg.type === 'error', 3000);
+        if (reply.type !== 'movej.ok') {
+          log(`Follower move error: ${JSON.stringify(reply)}`);
+        }
       }
 
       executedSeq = frame.seq;
@@ -304,9 +345,11 @@ async function main() {
     rtmUserId: args.rtmUserId,
     rtmToken: args.rtmToken,
     channel: args.channel,
+    topic: args.topic,
     followerWs: args.followerWs,
     speed: args.speed,
     executeFrequency: args.executeFrequency,
+    noWaitOk: args.noWaitOk,
     verbose: args.verbose,
   });
 }
