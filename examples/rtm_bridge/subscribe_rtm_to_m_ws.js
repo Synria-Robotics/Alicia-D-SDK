@@ -25,7 +25,6 @@ function parseCli() {
       'follower-ws': { type: 'string' },
       'speed': { type: 'string', default: '573' },
       'execute-frequency': { type: 'string', default: '50' },
-      'seq-wait-timeout-ms': { type: 'string', default: '100' },
       'no-wait-ok': { type: 'boolean', default: false },
       'recv-csv': { type: 'string', default: 'rtm_received.csv' },
       'send-csv': { type: 'string', default: 'm_commands.csv' },
@@ -39,7 +38,7 @@ function parseCli() {
 
   if (values.help || !values['follower-ws']) {
     console.log(`Usage:
-  node subscribe_rtm_to_m_ws.js --follower-ws ws://localhost:8000/robots/ws//dev/cu.xxx [--app-id ${DEFAULT_APP_ID}] [--channel alicia-teleop] [--topic teleop] [--speed 573] [--execute-frequency 50] [--seq-wait-timeout-ms 100] [--no-wait-ok] [--recv-csv rtm_received.csv] [--send-csv m_commands.csv] [--chrome "${DEFAULT_CHROME_PATH}"] [--rtm-user-id m-subscriber] [--rtm-token <token>] [--headed] [--verbose]`);
+  node subscribe_rtm_to_m_ws.js --follower-ws ws://localhost:8000/robots/ws//dev/cu.xxx [--app-id ${DEFAULT_APP_ID}] [--channel alicia-teleop] [--topic teleop] [--speed 573] [--execute-frequency 50] [--no-wait-ok] [--recv-csv rtm_received.csv] [--send-csv m_commands.csv] [--chrome "${DEFAULT_CHROME_PATH}"] [--rtm-user-id m-subscriber] [--rtm-token <token>] [--headed] [--verbose]`);
     process.exit(values.help ? 0 : 1);
   }
 
@@ -52,7 +51,6 @@ function parseCli() {
     followerWs: values['follower-ws'],
     speed: Number(values.speed),
     executeFrequency: Number(values['execute-frequency']),
-    seqWaitTimeoutMs: Number(values['seq-wait-timeout-ms']),
     noWaitOk: values['no-wait-ok'],
     recvCsv: values['recv-csv'],
     sendCsv: values['send-csv'],
@@ -82,7 +80,6 @@ async function main() {
   log(`RTM channel: ${args.channel}`);
   log(`RTM topic: ${args.topic}`);
   log(`Execute tick frequency: ${args.executeFrequency} Hz`);
-  log(`Seq wait timeout: ${args.seqWaitTimeoutMs} ms`);
   log(`Wait for movej.ok: ${args.noWaitOk ? 'no' : 'yes'}`);
   log(`Receive CSV: ${recvCsvPath}`);
   log(`Send CSV: ${sendCsvPath}`);
@@ -232,14 +229,12 @@ async function main() {
       log(`RTM login+subscribe OK: ${cfg.rtmUserId}`);
     }
 
-    const pendingFrames = new Map();
+    const executeQueue = [];
     let lastQueuedSeq = -1;
     let droppedFrames = 0;
     let executedSeq = -1;
     let lastVerboseAt = 0;
     let lastRecvLogAt = 0;
-    let expectedSeq = null;
-    let missingSeqSinceMs = 0;
     const intervalMs = 1000 / cfg.executeFrequency;
     let nextTickAt = performance.now();
     const maxQueueSize = 2000;
@@ -270,19 +265,15 @@ async function main() {
         const recvTimeMs = Date.now();
         if (cfg.verbose && recvTimeMs - lastRecvLogAt >= 1000) {
           lastRecvLogAt = recvTimeMs;
-          log(`recv seq=${payload.seq} queued=${pendingFrames.size} channelType=${event.channelType} topic=${event.topicName || ''}`);
+          log(`recv seq=${payload.seq} queued=${executeQueue.length} channelType=${event.channelType} topic=${event.topicName || ''}`);
         }
         payload.recv_time_ms = recvTimeMs;
-        if (pendingFrames.size >= maxQueueSize) {
-          const oldestSeq = Math.min(...pendingFrames.keys());
-          pendingFrames.delete(oldestSeq);
+        if (executeQueue.length >= maxQueueSize) {
+          executeQueue.shift();
           droppedFrames += 1;
         }
-        pendingFrames.set(payload.seq, payload);
+        executeQueue.push(payload);
         lastQueuedSeq = payload.seq;
-        if (expectedSeq === null) {
-          expectedSeq = payload.seq;
-        }
         window.appendRecvCsv([
           payload.seq,
           recvTimeMs,
@@ -303,35 +294,17 @@ async function main() {
       }
       nextTickAt += intervalMs;
 
-      if (pendingFrames.size === 0) {
+      if (executeQueue.length === 0) {
         if (performance.now() - nextTickAt > intervalMs * 2) {
           nextTickAt = performance.now();
         }
         continue;
       }
 
-      if (expectedSeq === null) {
-        expectedSeq = Math.min(...pendingFrames.keys());
+      const frame = executeQueue.shift();
+      if (executedSeq >= 0 && frame.seq !== executedSeq + 1) {
+        log(`Seq gap before execute: prev=${executedSeq} current=${frame.seq}`);
       }
-      let frame = pendingFrames.get(expectedSeq);
-      if (!frame) {
-        if (missingSeqSinceMs === 0) {
-          missingSeqSinceMs = Date.now();
-          continue;
-        }
-        if (Date.now() - missingSeqSinceMs < cfg.seqWaitTimeoutMs) {
-          continue;
-        }
-        log(`Seq timeout skip: missing=${expectedSeq} wait_ms=${Date.now() - missingSeqSinceMs}`);
-        expectedSeq += 1;
-        missingSeqSinceMs = 0;
-        frame = pendingFrames.get(expectedSeq);
-        if (!frame) {
-          continue;
-        }
-      }
-      pendingFrames.delete(expectedSeq);
-      missingSeqSinceMs = 0;
 
       const followerCmd = {
         type: 'cmd.movej',
@@ -357,15 +330,14 @@ async function main() {
       }
 
       executedSeq = frame.seq;
-      expectedSeq = frame.seq + 1;
       if (cfg.verbose && Date.now() - lastVerboseAt >= 1000) {
         lastVerboseAt = Date.now();
-        log(`executed seq=${executedSeq} queued=${pendingFrames.size} dropped=${droppedFrames} joints=${JSON.stringify(followerCmd.joints_deg)} gripper=${Math.round(followerCmd.gripper)} speed=${cfg.speed}`);
+        log(`executed seq=${executedSeq} queued=${executeQueue.length} dropped=${droppedFrames} joints=${JSON.stringify(followerCmd.joints_deg)} gripper=${Math.round(followerCmd.gripper)} speed=${cfg.speed}`);
       }
 
       if (performance.now() - nextTickAt > intervalMs * 2) {
         nextTickAt = performance.now();
-        log(`Subscriber tick overrun; resync scheduler queue=${pendingFrames.size} dropped=${droppedFrames}`);
+        log(`Subscriber tick overrun; resync scheduler queue=${executeQueue.length} dropped=${droppedFrames}`);
       }
     }
   }, {
@@ -377,7 +349,6 @@ async function main() {
     followerWs: args.followerWs,
     speed: args.speed,
     executeFrequency: args.executeFrequency,
-    seqWaitTimeoutMs: args.seqWaitTimeoutMs,
     noWaitOk: args.noWaitOk,
     verbose: args.verbose,
   });
