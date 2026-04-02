@@ -1,0 +1,17 @@
+{
+  "name": "rtm_bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Alicia D(ws) -> Agora RTM -> Alicia M(ws) bridge",
+  "scripts": {
+    "publisher": "node publish_d_ws_to_rtm.js",
+    "subscriber": "node subscribe_rtm_to_m_ws.js",
+    "compare": "node compare_csv.js"
+  },
+  "dependencies": {
+    "agora-rtm": "^2.2.3-2",
+    "agora-rtc-sdk-ng": "^4.23.0",
+    "playwright-core": "^1.58.2"
+  }
+}

@@ -42,6 +42,7 @@ venv.bak/
 *.swo
 .DS_Store
 *.json
+!examples/rtm_bridge/package.json
 
 
 # Data files
