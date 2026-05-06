@@ -27,7 +27,7 @@ Features:
 
 import alicia_d_sdk
 import time
-from alicia_d_sdk.utils.logger import logger
+from alicia_d_sdk.utils.beauty_logger import logger
 
 def main(args):
     """Demonstrate gripper control.

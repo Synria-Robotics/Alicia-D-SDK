@@ -21,7 +21,7 @@ import time
 from typing import List, Dict, Optional, NamedTuple, Union
 import threading
 import copy
-from alicia_d_sdk.utils.logger import logger
+from alicia_d_sdk.utils.beauty_logger import logger
 
 
 class JointState(NamedTuple):

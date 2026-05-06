@@ -24,7 +24,7 @@ import numpy as np
 
 from alicia_d_sdk.hardware.serial_comm import SerialComm
 from alicia_d_sdk.hardware.data_parser import DataParser
-from alicia_d_sdk.utils.logger import logger, hex_print
+from alicia_d_sdk.utils.beauty_logger import logger, hex_print
 
 
 class ServoDriver:

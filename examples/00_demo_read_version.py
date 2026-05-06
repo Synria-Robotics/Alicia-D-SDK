@@ -21,7 +21,7 @@ Demo: Read robot firmware version
 """
 
 import alicia_d_sdk
-from alicia_d_sdk.utils.logger import logger
+from alicia_d_sdk.utils.beauty_logger import logger
 
 def main(args):
     """Read and print robot firmware version.

@@ -27,7 +27,7 @@ import threading
 from datetime import datetime
 # from PyCRC.CRC32 import CRC32
 import getpass
-from alicia_d_sdk.utils.logger import logger
+from alicia_d_sdk.utils.beauty_logger import logger
 READ_LENGTH = 50
 DEFAULT_LENGTH = 6
 

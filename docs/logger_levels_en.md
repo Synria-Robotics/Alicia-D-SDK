@@ -24,7 +24,7 @@ Log levels are arranged from low to high importance:
 ### 1. Specify Level When Creating Logger
 
 ```python
-from alicia_d_sdk.utils.logger import BeautyLogger, LogLevel
+from alicia_d_sdk.utils.beauty_logger import BeautyLogger, LogLevel
 
 # Only show WARNING level and above
 logger = BeautyLogger(
@@ -71,7 +71,7 @@ logger.error("This ERROR message will be displayed")
 ### 3. Practical Usage Example
 
 ```python
-from alicia_d_sdk.utils.logger import BeautyLogger, LogLevel
+from alicia_d_sdk.utils.beauty_logger import BeautyLogger, LogLevel
 
 # Development environment: show all logs
 if development_mode:

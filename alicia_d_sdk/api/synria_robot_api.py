@@ -28,7 +28,7 @@ Responsibilities:
 """
 
 from alicia_d_sdk.utils import precise_sleep
-from alicia_d_sdk.utils import logger
+from alicia_d_sdk.utils.beauty_logger import logger
 from alicia_d_sdk.hardware.data_parser import JointState
 from alicia_d_sdk.hardware import ServoDriver
 import robocore as rc
