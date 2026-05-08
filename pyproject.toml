@@ -7,7 +7,7 @@ name = "alicia_d_sdk"
 version = "6.1.0rc4"
 description = "Python SDK for controlling the Synria Robotics Alicia-D series robotic arms."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = {text = "GPL-3.0"}
 authors = [
     {name = "Synria Robotics", email = "support@synriarobotics.ai"}
@@ -36,7 +36,7 @@ dependencies = [
     "pythoncrc",
     "pycrc",
     "synriard>=1.1.0rc1",  
-    "synria-robocore>=2.0.0alpha1",
+    "synria-robocore @ git+https://github.com/Synria-Robotics/RoboCore.git@v2.5.0",
 ]
 
 [project.urls]
