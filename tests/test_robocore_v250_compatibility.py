@@ -25,6 +25,27 @@ import numpy as np
 import pytest
 
 
+class _DummySerialComm:
+    def is_connected(self):
+        return False
+
+
+class _DummyServoDriver:
+    def __init__(self):
+        self.data_parser = object()
+        self.debug_mode = False
+        self.serial_comm = _DummySerialComm()
+
+    def connect(self):
+        return False
+
+    def stop_update_thread(self):
+        return None
+
+    def disconnect(self):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Version check
 # ---------------------------------------------------------------------------
@@ -162,6 +183,19 @@ class TestUtilsAPI:
         assert callable(set_backend)
         assert callable(get_backend)
 
+    def test_cpp_backend_selectable(self):
+        import robocore
+
+        previous = robocore.get_backend()
+        try:
+            robocore.set_backend('cpp')
+            assert robocore.get_backend() == 'cpp'
+        finally:
+            if previous == 'torch':
+                robocore.set_backend('torch', device='cpu')
+            else:
+                robocore.set_backend(previous)
+
     def test_beauty_print_importable(self):
         from robocore.utils.beauty_logger import beauty_print  # noqa: F401
         assert callable(beauty_print)
@@ -200,3 +234,69 @@ class TestPlanningAPI:
     def test_plot_cartesian_with_ik_importable(self):
         from robocore.planning import plot_cartesian_with_ik  # noqa: F401
         assert callable(plot_cartesian_with_ik)
+
+
+class TestSdkBackendBehavior:
+    """Verify Alicia-D SDK backend defaults and overrides."""
+
+    def test_synria_robot_api_defaults_to_cpp_backend(self, monkeypatch):
+        from alicia_d_sdk.api.synria_robot_api import SynriaRobotAPI
+
+        set_backend_calls = []
+
+        def fake_set_backend(backend, device='cpu'):
+            set_backend_calls.append((backend, device))
+
+        monkeypatch.setattr(
+            'alicia_d_sdk.api.synria_robot_api.rc.set_backend',
+            fake_set_backend,
+        )
+
+        SynriaRobotAPI(
+            servo_driver=_DummyServoDriver(),
+            robot_model=object(),
+            auto_connect=False,
+        )
+
+        assert set_backend_calls == [('cpp', 'cpu')]
+
+    def test_get_pose_respects_explicit_numpy_backend(self, monkeypatch):
+        from alicia_d_sdk.api.synria_robot_api import SynriaRobotAPI
+
+        set_backend_calls = []
+
+        def fake_set_backend(backend, device='cpu'):
+            set_backend_calls.append((backend, device))
+
+        monkeypatch.setattr(
+            'alicia_d_sdk.api.synria_robot_api.rc.set_backend',
+            fake_set_backend,
+        )
+        monkeypatch.setattr(
+            SynriaRobotAPI,
+            'get_robot_state',
+            lambda self, info_type='joint', timeout=1.0, cache=True: [0.0] * 6,
+        )
+        monkeypatch.setattr(
+            'alicia_d_sdk.api.synria_robot_api.forward_kinematics',
+            lambda robot_model, joint_angles, return_end=True: np.eye(4),
+        )
+        monkeypatch.setattr(
+            'alicia_d_sdk.api.synria_robot_api.matrix_to_euler',
+            lambda rotation, seq='xyz': np.zeros(3),
+        )
+        monkeypatch.setattr(
+            'alicia_d_sdk.api.synria_robot_api.matrix_to_quaternion',
+            lambda rotation: np.array([0.0, 0.0, 0.0, 1.0]),
+        )
+
+        robot = SynriaRobotAPI(
+            servo_driver=_DummyServoDriver(),
+            robot_model=object(),
+            auto_connect=False,
+        )
+        set_backend_calls.clear()
+
+        robot.get_pose(backend='numpy')
+
+        assert set_backend_calls == [('numpy', 'cpu')]

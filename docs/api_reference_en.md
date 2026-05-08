@@ -16,8 +16,8 @@ robot = create_robot(
     auto_connect=True,          # Auto-connect on creation
     base_link="base_link",      # Base link name
     end_link="tool0",           # End-effector link name
-    backend=None,               # Computation backend, 'numpy' or 'torch' (default: None, uses 'numpy')
-    device="cpu"                # Device for torch backend, 'cpu' or 'cuda' (default: 'cpu')
+    backend=None,               # Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses 'cpp')
+    device="cpu"                # Device for torch backend, 'cpu' or 'cuda' (default: 'cpu', ignored for 'cpp' / 'numpy')
 )
 ```
 
@@ -71,7 +71,7 @@ robot = create_robot()
   
   **Parameters:**
   - `target_pose`: Target pose as [x, y, z, qx, qy, qz, qw] (position + quaternion)
-  - `backend`: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+  - `backend`: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization; SDK default is 'cpp')
   - `method`: IK solver method, 'dls' (damped least squares), 'pinv' (pseudo-inverse), or 'transpose', default 'dls'
   - `pos_tol`: Position tolerance in meters, default 1e-3
   - `ori_tol`: Orientation tolerance in radians, default 1e-3
@@ -111,7 +111,7 @@ robot = create_robot()
   - `waypoints`: Array of waypoint poses [n_waypoints, 4, 4] (transformation matrices) or [n_waypoints, 3] (positions only)
   - `duration`: Total trajectory duration in seconds (optional, auto-estimated if None)
   - `num_points`: Number of points in trajectory, default 100
-  - `backend`: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+  - `backend`: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization; SDK default is 'cpp')
   
   **Returns:** Dictionary with 't', 'poses', 'positions', 'orientations', 'velocities', 'accelerations'
 
@@ -129,7 +129,7 @@ robot = create_robot()
   - `initial_guess_strategy`: Initial guess strategy, default 'random'
   - `initial_guess_scale`: Scale factor for initial guesses (0.0 to 1.0), default 0.6
   - `random_seed`: Random seed for reproducibility, default None
-  - `backend`: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+  - `backend`: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization; SDK default is 'cpp')
   - `use_previous_solution`: If True, use previous solution as initial guess (ensures continuity), default True
   
   **Returns:** Dictionary with 'joint_angles', 'ik_results', 'success_rate', 'statistics'
@@ -161,7 +161,7 @@ robot = create_robot()
   Get current end-effector position and orientation, returns a dictionary containing `transform`, `position`, `rotation`, `euler_xyz`, `quaternion_xyzw`
   
   **Parameters:**
-  - `backend`: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+  - `backend`: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization; SDK default is 'cpp')
   
   **Returns:** Dictionary with pose information, or None if failed
 
@@ -212,9 +212,11 @@ robot = create_robot()
 The SDK integrates the [RoboCore](https://github.com/Synria-Robotics/RoboCore) library, providing high-performance kinematics and trajectory planning functionality:
 
 ### Kinematics Functions (from robocore.kinematics):
-- `forward_kinematics(robot_model, q, backend='numpy', return_end=True)`
-- `inverse_kinematics(robot_model, pose, q_init, backend='numpy', method='dls', ...)`
-- `jacobian(robot_model, q, backend='numpy', method='analytic')`
+- `forward_kinematics(robot_model, q, backend='cpp', return_end=True)`
+- `inverse_kinematics(robot_model, pose, q_init, backend='cpp', method='dls', ...)`
+- `jacobian(robot_model, q, backend='cpp', method='analytic')`
+
+Note: the SDK defaults to the `cpp` backend, while `numpy` and `torch` remain available as explicit overrides.
 
 
 ---

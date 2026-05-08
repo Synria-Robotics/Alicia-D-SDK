@@ -116,9 +116,9 @@ if __name__ == "__main__":
                         help='Joint limit scale factor (0.0 to 1.0, default: 1.0)')
     parser.add_argument('--seed', type=int, default=None,
                         help='Random seed (default: None)')
-    parser.add_argument('--backend', type=str, default='numpy',
-                        choices=['numpy', 'torch'],
-                        help='Computation backend (default: numpy)')
+    parser.add_argument('--backend', type=str, default='cpp',
+                        choices=['cpp', 'numpy', 'torch'],
+                        help='Computation backend (default: cpp)')
     parser.add_argument('--execute', action='store_true', help='Execute motion to the solved position')
     parser.add_argument('--force-execute', action='store_true', help='Force execute motion to the solved position, regardless of success')
     

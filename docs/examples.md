@@ -187,7 +187,7 @@ python 06_demo_forward_kinematics.py
 - `--init-strategy`: 初始猜测策略，可选 `zero`、`random`、`sobol`、`latin`、`center`、`uniform`、`current`，默认 `current`
 - `--init-scale`: 关节限制缩放因子（0.0 到 1.0），默认 1.0
 - `--seed`: 随机种子（可选）
-- `--backend`: 计算后端，可选 `numpy` 或 `torch`，默认 `numpy`
+- `--backend`: 计算后端，可选 `cpp`、`numpy` 或 `torch`，默认 `cpp`
 - `--execute`: 执行移动到求解的位置
 - `--force-execute`: 强制执行移动，即使求解失败
 

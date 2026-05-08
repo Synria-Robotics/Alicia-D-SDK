@@ -251,7 +251,8 @@ if __name__ == '__main__':
     parser.add_argument('--timeout', type=float, default=10.0, help='Timeout per command (seconds)')
     
     # Other
-    parser.add_argument('--backend', type=str, default='numpy', choices=['numpy', 'torch'], help='Backend')
+    parser.add_argument('--backend', type=str, default='cpp', choices=['cpp', 'numpy', 'torch'],
+                        help='Backend (default: cpp)')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
     parser.add_argument('--plot', action='store_false', help='Plot trajectory visualization')
     

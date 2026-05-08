@@ -38,25 +38,39 @@ def main(args):
     robot = alicia_d_sdk.create_robot(port=args.port)
     
     try:
-        # Get gripper value (0-1000)
+        # Read and print initial gripper value (0-1000)
         gripper_value = robot.get_robot_state("gripper")
         if gripper_value is not None:
-            logger.info(f"Gripper value: {gripper_value:.1f}")
+            logger.info(f"Initial gripper value: {gripper_value:.1f}")
         else:
-            logger.warning("Failed to read gripper value")
-        
-        # Test 1: Open gripper
-        robot.set_robot_state(gripper_value=1000, wait_for_completion=True, gripper_speed_deg_s=100)
-        time.sleep(1)
-        # Test 2: Close gripper
-        robot.set_robot_state(gripper_value=0, wait_for_completion=True, gripper_speed_deg_s=100)
-        time.sleep(1)
-        # # Test 3: Partially open
-        robot.set_robot_state(gripper_value=500, wait_for_completion=True, gripper_speed_deg_s=100)
-        time.sleep(1)
-        # Test 4: Open gripper
-        robot.set_robot_state(gripper_value=1000, wait_for_completion=True, gripper_speed_deg_s=100)
-        time.sleep(1)
+            logger.warning("Failed to read initial gripper value")
+
+        # Demo sequence: open -> close -> half-open -> open
+        sequence = [
+            ("Step 1", 1000, "Open gripper"),
+            ("Step 2", 0, "Close gripper"),
+            ("Step 3", 500, "Half-open gripper"),
+            ("Step 4", 1000, "Open gripper again"),
+        ]
+
+        for step, target, description in sequence:
+            logger.info(f"{step}: {description}, target={target}")
+            ok = robot.set_robot_state(
+                gripper_value=target,
+                wait_for_completion=True,
+                gripper_speed_deg_s=100,
+            )
+            if not ok:
+                logger.warning(f"{step}: command failed")
+                continue
+
+            current = robot.get_robot_state("gripper")
+            if current is not None:
+                logger.info(f"{step}: reached value={current:.1f}")
+            else:
+                logger.warning(f"{step}: command sent but failed to read current gripper value")
+
+            time.sleep(1)
 
         
     except KeyboardInterrupt:

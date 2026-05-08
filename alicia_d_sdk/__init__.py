@@ -27,6 +27,7 @@ Architecture Layers:
 - Planning Layer: RoboCore trajectory planning functions
 
 RoboCore Integration:
+- Default compute backend: RoboCore cpp backend when available
 - robocore.kinematics: Provides FK/IK/Jacobian calculations
 - robocore.planning: Provides trajectory planning functionality
 - robocore.modeling: Provides RobotModel for robot representation
@@ -34,6 +35,7 @@ RoboCore Integration:
 
 from alicia_d_sdk.api import SynriaRobotAPI
 from alicia_d_sdk.hardware import ServoDriver
+from alicia_d_sdk.api.synria_robot_api import BackendName
 
 # Import from RoboCore for kinematics and modeling
 from robocore.modeling import RobotModel
@@ -92,7 +94,7 @@ def create_robot(
     auto_connect: bool = True,
     base_link: str = "base_link",
     end_link: str = "tool0",
-    backend: Optional[str] = None,
+    backend: Optional[BackendName] = None,
     device: str = "cpu",
     model_path: str = None,
     gripper_type: str = None,
@@ -107,8 +109,8 @@ def create_robot(
     :param debug_mode: Debug mode
     :param base_link: Base link name in the robot model (default 'base_link')
     :param end_link: End link name in the robot model (default 'tool0')
-    :param backend: Computation backend, 'numpy' or 'torch' (default: None, uses 'numpy')
-    :param device: Device for torch backend, 'cpu' or 'cuda' (default: 'cpu')
+    :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses 'cpp')
+    :param device: Device for torch backend, 'cpu' or 'cuda' (default: 'cpu', ignored for 'cpp' and 'numpy')
     :param model_path: Model path, if None, use default model path
     :param gripper_type: Gripper type:  deprecated, use variant instead please
         - explicit value such as "50mm" / "100mm" for user-defined configuration

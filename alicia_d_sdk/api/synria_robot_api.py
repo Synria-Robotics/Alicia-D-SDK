@@ -41,10 +41,13 @@ from robocore.modeling import RobotModel
 from robocore.kinematics import inverse_kinematics
 import json
 import numpy as np
-from typing import List, Optional, Dict, Union, Tuple, Any
+from typing import List, Optional, Dict, Union, Tuple, Any, Literal
 import time
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+
+BackendName = Literal['cpp', 'numpy', 'torch']
 
 
 class SynriaRobotAPI:
@@ -54,26 +57,26 @@ class SynriaRobotAPI:
                  servo_driver: ServoDriver,
                  robot_model: RobotModel,
                  auto_connect: bool = True,
-                 backend: Optional[str] = None,
+                 backend: Optional[BackendName] = None,
                  device: str = "cpu"):
         """Initialize robot API.
 
         :param servo_driver: Servo driver instance (low-level hardware)
         :param robot_model: Pre-loaded robot model (RoboCore RobotModel)
         :param auto_connect: Auto connect to robot on initialization
-        :param backend: Computation backend, 'numpy' or 'torch' (default: None, uses 'numpy')
-        :param device: Device for torch backend, 'cpu' or 'cuda' (default: 'cpu')
+        :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses 'cpp')
+        :param device: Device for torch backend, 'cpu' or 'cuda' (default: 'cpu', ignored for 'cpp' and 'numpy')
         """
         self.servo_driver = servo_driver
         self.data_parser = servo_driver.data_parser  # Direct access to data parser
         self.robot_model = robot_model
         self.debug_mode = servo_driver.debug_mode  # Access debug mode from servo driver
 
-        # Set backend if provided, otherwise use default 'numpy'
+        # Set backend if provided, otherwise use default 'cpp'
         if backend is not None:
             rc.set_backend(backend, device=device)
         else:
-            rc.set_backend('numpy')
+            rc.set_backend('cpp')
 
         # Higher-level helpers
         self.robot_type = None
@@ -154,15 +157,15 @@ class SynriaRobotAPI:
 
         return result
 
-    def get_pose(self, backend: Optional[str] = None) -> Optional[Union[List[float], Dict]]:
+    def get_pose(self, backend: Optional[BackendName] = None) -> Optional[Union[List[float], Dict]]:
         """Get current end-effector pose.
 
-        :param backend: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+        :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization)
         :return: Dictionary with position, rotation, euler_xyz, quaternion_xyzw, transform, or None if failed
         """
         # Set backend globally (forward_kinematics uses global backend)
-        if backend == 'torch':
-            rc.set_backend(backend)  # ignore numpy since default is inherited
+        if backend is not None:
+            rc.set_backend(backend)
         joint_angles = self.get_robot_state("joint")
         if joint_angles is None:
             logger.error("Failed to get joint angles")
@@ -309,7 +312,7 @@ class SynriaRobotAPI:
 
     def set_pose(self,
                  target_pose: List[float],
-                 backend: Optional[str] = None,
+                 backend: Optional[BackendName] = None,
                  method: str = 'dls',
                  pos_tol: float = 1e-3,
                  ori_tol: float = 1e-3,
@@ -325,7 +328,7 @@ class SynriaRobotAPI:
         """Move end-effector to target pose using inverse kinematics.
 
         :param target_pose: Target pose as [x, y, z, qx, qy, qz, qw]
-        :param backend: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+        :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization)
         :param method: IK solver method, 'dls', 'pinv', or 'transpose'
         :param pos_tol: Position tolerance in meters
         :param ori_tol: Orientation tolerance in radians
@@ -342,8 +345,8 @@ class SynriaRobotAPI:
         """
 
         # Set backend globally (inverse_kinematics uses global backend)
-        if backend == 'torch':
-            rc.set_backend(backend)  # ignore numpy since default is inherited
+        if backend is not None:
+            rc.set_backend(backend)
 
         # Get initial guess based on strategy
         if initial_guess_strategy == 'current':
@@ -525,7 +528,7 @@ class SynriaRobotAPI:
         waypoints: np.ndarray,
         duration: Optional[float] = None,
         num_points: int = 100,
-        backend: Optional[str] = None
+        backend: Optional[BackendName] = None
     ) -> Dict[str, Any]:
         """Plan Cartesian space spline trajectory through waypoints.
 
@@ -533,7 +536,7 @@ class SynriaRobotAPI:
                           or [n_waypoints, 3] (positions only, will use identity orientation)
         :param duration: Total trajectory duration in seconds (optional, auto-estimated if None)
         :param num_points: Number of points in trajectory
-        :param backend: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+        :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization)
         :return: Dictionary with 't', 'poses', 'positions', 'orientations', 'velocities', 'accelerations'
         """
         import robocore as rc
@@ -541,8 +544,8 @@ class SynriaRobotAPI:
         from robocore.utils.backend import to_numpy
 
         # Set backend for planning (forward_kinematics uses global backend)
-        if backend == 'torch':
-            rc.set_backend(backend)  # ignore numpy since default is inherited
+        if backend is not None:
+            rc.set_backend(backend)
 
         # Ensure waypoints are numpy arrays
         if isinstance(waypoints, list):
@@ -593,7 +596,7 @@ class SynriaRobotAPI:
         initial_guess_strategy: str = 'random',
         initial_guess_scale: float = 0.6,
         random_seed: Optional[int] = None,
-        backend: Optional[str] = None,
+        backend: Optional[BackendName] = None,
         use_previous_solution: bool = True
     ) -> Dict[str, Any]:
         """Solve inverse kinematics for a sequence of Cartesian poses.
@@ -608,7 +611,7 @@ class SynriaRobotAPI:
         :param initial_guess_strategy: Initial guess strategy ('zero', 'random', 'sobol', 'latin', 'center', 'uniform')
         :param initial_guess_scale: Scale factor for initial guesses (0.0 to 1.0)
         :param random_seed: Random seed for reproducibility
-        :param backend: Computation backend, 'numpy' or 'torch' (default: None, uses backend set at initialization)
+        :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses backend set at initialization)
         :param use_previous_solution: If True, use previous solution as initial guess (ensures continuity)
         :return: Dictionary with 'joint_angles', 'ik_results', 'success_rate', 'statistics'
         """
@@ -618,8 +621,8 @@ class SynriaRobotAPI:
         import time
 
         # Set backend if specified (inverse_kinematics uses global backend)
-        if backend == 'torch':
-            rc.set_backend(backend)  # ignore numpy since default is inherited
+        if backend is not None:
+            rc.set_backend(backend)
 
         target_poses = to_numpy(target_poses)
         n_poses = len(target_poses)

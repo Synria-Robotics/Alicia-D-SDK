@@ -33,7 +33,7 @@ The **Alicia-D SDK** is a Python toolkit for controlling the "Alicia-D" series o
 | Module | Functionality | Status |
 |--------|---------------|--------|
 | **Modeling** | URDF/MJCF parsing, Robot model abstraction | ✅ Stable |
-| **Forward Kinematics** | NumPy/PyTorch backends, Batch processing | ✅ Stable |
+| **Forward Kinematics** | C++/NumPy/PyTorch backends, Batch processing | ✅ Stable |
 | **Inverse Kinematics** | DLS/Pinv/Transpose methods, Multi-start | ✅ Stable |
 | **Jacobian** | Analytic/Numeric/Autograd methods | ✅ Stable |
 | **Transform** | SE(3)/SO(3) operations, Conversions | ✅ Stable |
@@ -56,7 +56,7 @@ The **Alicia-D SDK** is a Python toolkit for controlling the "Alicia-D" series o
 *   **Automatic Serial Connection**: Automatically searches for serial ports or allows manual specification.
 *   **Teaching Mode**: Record pose points by dragging and execute the trajectory.
 *   **Smart Logging System**: Supports log level filtering to control console output verbosity.
-*   **RoboCore Integration**: Integrated high-performance kinematics and trajectory planning library.
+*   **RoboCore Integration**: Uses RoboCore cpp as the default backend while retaining explicit `numpy` and `torch` overrides.
 
 ## Project Structure
 
