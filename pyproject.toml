@@ -37,7 +37,7 @@ dependencies = [
     "pythoncrc",
     "pycrc",
     "synriard>=1.1.0rc1",  
-    "synria-robocore[torch]==2.5.0rc1",
+    "synria-robocore[torch]==2.5.0rc2",
 ]
 
 [project.urls]

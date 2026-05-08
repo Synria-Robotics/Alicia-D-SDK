@@ -21,7 +21,7 @@ The **Alicia-D SDK** is a Python toolkit for controlling the "Alicia-D" series o
 
 <p align="center"><img src="./imgs/logo.jpeg" width="400" /></p>
 
-[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 
 **Developed by [Synria Robotics Co., Ltd.](https://synriarobotics.ai)** 🤖
