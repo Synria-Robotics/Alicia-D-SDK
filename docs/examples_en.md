@@ -187,7 +187,7 @@ Demonstrate inverse kinematics solving: Calculate and optionally execute joint a
 - `--init-strategy`: Initial guess strategy, optional `zero`, `random`, `sobol`, `latin`, `center`, `uniform`, `current`, default `current`
 - `--init-scale`: Joint limit scale factor (0.0 to 1.0), default 1.0
 - `--seed`: Random seed (optional)
-- `--backend`: Computation backend, optional `numpy` or `torch`, default `numpy`
+- `--backend`: Computation backend, optional `cpp`, `numpy`, or `torch`, default `cpp`
 - `--execute`: Execute movement to solved position
 - `--force-execute`: Force execute movement, even if solving fails
 

@@ -16,8 +16,8 @@ robot = create_robot(
     auto_connect=True,          # 自动连接
     base_link="base_link",      # 基座链路名称
     end_link="tool0",           # 末端执行器链路名称
-    backend=None,               # 计算后端，'numpy' 或 'torch'（默认: None，使用 'numpy'）
-    device="cpu"                # torch 后端设备，'cpu' 或 'cuda'（默认: 'cpu'）
+    backend=None,               # 计算后端，'cpp'、'numpy' 或 'torch'（默认: None，使用 'cpp'）
+    device="cpu"                # torch 后端设备，'cpu' 或 'cuda'（默认: 'cpu'，对 'cpp' / 'numpy' 忽略）
 )
 ```
 
@@ -71,7 +71,7 @@ robot = create_robot()
   
   **参数：**
   - `target_pose`: 目标位姿，格式为 [x, y, z, qx, qy, qz, qw]（位置 + 四元数）
-  - `backend`: 计算后端，'numpy' 或 'torch'（默认: None，使用初始化时设置的后端）
+  - `backend`: 计算后端，'cpp'、'numpy' 或 'torch'（默认: None，使用初始化时设置的后端；SDK 默认是 'cpp'）
   - `method`: IK 求解方法，'dls'（阻尼最小二乘）、'pinv'（伪逆）或 'transpose'（转置），默认 'dls'
   - `pos_tol`: 位置容差（米），默认 1e-3
   - `ori_tol`: 姿态容差（弧度），默认 1e-3
@@ -111,7 +111,7 @@ robot = create_robot()
   - `waypoints`: 路径点数组 [n_waypoints, 4, 4]（变换矩阵）或 [n_waypoints, 3]（仅位置）
   - `duration`: 轨迹总时长（秒），可选，如果为 None 则自动估算
   - `num_points`: 轨迹点数，默认 100
-  - `backend`: 计算后端，'numpy' 或 'torch'（默认: None，使用初始化时设置的后端）
+  - `backend`: 计算后端，'cpp'、'numpy' 或 'torch'（默认: None，使用初始化时设置的后端；SDK 默认是 'cpp'）
   
   **返回值：** 包含 't', 'poses', 'positions', 'orientations', 'velocities', 'accelerations' 的字典
 
@@ -129,7 +129,7 @@ robot = create_robot()
   - `initial_guess_strategy`: 初始猜测策略，默认 'random'
   - `initial_guess_scale`: 初始猜测缩放因子（0.0 到 1.0），默认 0.6
   - `random_seed`: 随机种子，默认 None
-  - `backend`: 计算后端，'numpy' 或 'torch'（默认: None，使用初始化时设置的后端）
+  - `backend`: 计算后端，'cpp'、'numpy' 或 'torch'（默认: None，使用初始化时设置的后端；SDK 默认是 'cpp'）
   - `use_previous_solution`: 如果为 True，使用前一个解作为初始猜测（确保连续性），默认 True
   
   **返回值：** 包含 'joint_angles', 'ik_results', 'success_rate', 'statistics' 的字典
@@ -161,7 +161,7 @@ robot = create_robot()
   获取当前末端执行器位置与姿态，返回字典包含 `transform`, `position`, `rotation`, `euler_xyz`, `quaternion_xyzw`
   
   **参数：**
-  - `backend`: 计算后端，'numpy' 或 'torch'（默认: None，使用初始化时设置的后端）
+  - `backend`: 计算后端，'cpp'、'numpy' 或 'torch'（默认: None，使用初始化时设置的后端；SDK 默认是 'cpp'）
   
   **返回值：** 包含位姿信息的字典，失败返回 None
 
@@ -264,9 +264,11 @@ robot = create_robot()
 SDK 集成了 [RoboCore](https://github.com/Synria-Robotics/RoboCore) 库，提供高性能运动学和轨迹规划功能：
 
 ### 运动学功能（来自 robocore.kinematics）：
-- `forward_kinematics(robot_model, q, backend='numpy', return_end=True)`
-- `inverse_kinematics(robot_model, pose, q_init, backend='numpy', method='dls', ...)`
-- `jacobian(robot_model, q, backend='numpy', method='analytic')`
+- `forward_kinematics(robot_model, q, backend='cpp', return_end=True)`
+- `inverse_kinematics(robot_model, pose, q_init, backend='cpp', method='dls', ...)`
+- `jacobian(robot_model, q, backend='cpp', method='analytic')`
+
+说明：SDK 默认使用 `cpp` backend，也可显式切换为 `numpy` 或 `torch`。
 
 ### 轨迹规划功能（来自 robocore.planning）：
 - `cubic_polynomial_trajectory(q_start, q_end, duration, num_points)`

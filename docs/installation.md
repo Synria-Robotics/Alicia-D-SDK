@@ -21,6 +21,14 @@ pip install alicia_d_sdk
 
 这将自动安装所有依赖包，包括 `synria-robocore`。
 
+自 `synria-robocore v2.5.0` 起，Alicia-D SDK 默认使用 RoboCore 的 `cpp` backend。
+如果希望默认路径直接可用，请确保本机具备以下构建条件：
+- macOS: 安装 Xcode Command Line Tools: `xcode-select --install`
+- macOS: 安装 Eigen3: `brew install eigen`
+- Linux: 安装 C++ 编译器与 Eigen3（如 `build-essential` 和 `libeigen3-dev`）
+
+如果 C++ 扩展未成功构建，您仍可在代码中显式传入 `backend='numpy'` 或 `backend='torch'` 作为回退方案。
+
 ### 方法二：从源码安装（开发模式）
 
 如果您需要修改源码或参与开发，可以从 GitHub 克隆并安装：
@@ -36,6 +44,12 @@ conda activate alicia
 
 # 3. 安装依赖与 SDK（开发模式）
 pip install -e .
+```
+
+如需强制升级本地 RoboCore 到 SDK 依赖声明的版本，可执行：
+
+```bash
+pip install --upgrade --force-reinstall "synria-robocore @ git+https://github.com/Synria-Robotics/RoboCore.git@v2.5.0"
 ```
 
 ---
@@ -142,6 +156,8 @@ robot = create_robot(port="/dev/ttyACM0")
 - `pycrc`: CRC校验
 - `synria-robocore`: 运动学和轨迹规划库
 - `synriard`: 机器人描述文件
+
+说明：`synria-robocore v2.5.0` 默认支持 `cpp`、`numpy`、`torch` 三种后端，Alicia-D SDK 默认选择 `cpp`。
 
 ---
 

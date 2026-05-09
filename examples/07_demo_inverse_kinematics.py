@@ -1,17 +1,5 @@
 # Copyright (c) 2025 Synria Robotics Co., Ltd.
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Licensed under the MIT License.
 #
 # Author: Synria Robotics Team
 # Website: https://synriarobotics.ai
@@ -116,9 +104,9 @@ if __name__ == "__main__":
                         help='Joint limit scale factor (0.0 to 1.0, default: 1.0)')
     parser.add_argument('--seed', type=int, default=None,
                         help='Random seed (default: None)')
-    parser.add_argument('--backend', type=str, default='numpy',
-                        choices=['numpy', 'torch'],
-                        help='Computation backend (default: numpy)')
+    parser.add_argument('--backend', type=str, default='cpp',
+                        choices=['cpp', 'numpy', 'torch'],
+                        help='Computation backend (default: cpp)')
     parser.add_argument('--execute', action='store_true', help='Execute motion to the solved position')
     parser.add_argument('--force-execute', action='store_true', help='Force execute motion to the solved position, regardless of success')
     

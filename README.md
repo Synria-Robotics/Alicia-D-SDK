@@ -17,7 +17,7 @@
 本SDK由[Synria Robotics Co., Ltd.](https://synriarobotics.ai) 开发的 [RoboCore (Unified High-Throughput Robotics Library)](https://github.com/Synria-Robotics/RoboCore) 支持。
 
 
-[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 
 
@@ -28,7 +28,7 @@
 | 模块 | 功能 | 状态 |
 |---|---|---|
 | **建模** | URDF/MJCF 解析, 机器人模型抽象 | ✅ Stable |
-| **正向运动学** | 支持 NumPy/PyTorch 后端, 批处理 | ✅ Stable |
+| **正向运动学** | 支持 C++/NumPy/PyTorch 后端, 批处理 | ✅ Stable |
 | **逆向运动学** | 支持 DLS/Pinv/Transpose 多种求解器, 多起点求解 | ✅ Stable |
 | **雅可比矩阵** | 支持解析法/数值法/自动微分法 | ✅ Stable |
 | **坐标变换** | SE(3)/SO(3) 刚体变换, 多种格式转换 | ✅ Stable |
@@ -53,7 +53,7 @@
 *   **自动串口连接**：自动搜索串口或手动指定。
 *   **拖动示教**：拖动记录姿态点并执行轨迹。
 *   **日志系统**：支持日志级别过滤，可控制控制台输出详细程度。
-*   **RoboCore 集成**：集成高性能运动学和轨迹规划库。
+*   **RoboCore 集成**：默认使用 RoboCore cpp backend，并保留 `numpy` / `torch` 显式切换能力。
 
 ## 项目结构
 
