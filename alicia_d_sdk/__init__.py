@@ -5,7 +5,7 @@
 # Website: https://synriarobotics.ai
 
 """
-Alicia-D SDK v6.1.0 - Bridged with RoboCore
+Alicia-D SDK v6.1.0rc5 - Bridged with RoboCore
 
 Architecture Layers:
 - User Layer: SynriaRobotAPI (unified user interface)
@@ -34,9 +34,9 @@ from pathlib import Path
 from typing import Optional
 
 
-__version__ = "6.1.0"
+__version__ = "6.1.0rc5"
 __author__ = "Synria Robotics"
-__description__ = "Alicia-D Robot Arm SDK v6.1.0 - Bridged with RoboCore"
+__description__ = "Alicia-D Robot Arm SDK v6.1.0rc5 - Bridged with RoboCore"
 
 
 def _get_gripper_type_from_json() -> str:
