@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alicia_d_sdk"
-version = "6.1.0rc4"
+version = "6.1.0rc5"
 description = "Python SDK for controlling the Synria Robotics Alicia-D series robotic arms."
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Synria Robotics", email = "support@synriarobotics.ai"}
 ]
@@ -18,7 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Education",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Libraries :: Python Modules",
