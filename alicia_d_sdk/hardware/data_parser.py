@@ -265,7 +265,7 @@ class DataParser:
         for i in range(6):
             start = i * 2
             joint_bytes = data_bytes[start:start + 2]
-            angle_rad = self._bytes_to_radians(joint_bytes)
+            angle_rad = self._bytes_to_radians(joint_bytes, joint_id=i + 1)
             joint_values[i] = angle_rad
 
         gripper_low = data_bytes[12]
@@ -601,7 +601,7 @@ class DataParser:
             "timestamp": time.time(),
         }
 
-    def _bytes_to_radians(self, byte_array: List[int]) -> float:
+    def _bytes_to_radians(self, byte_array: List[int], joint_id: Optional[int] = None) -> float:
         """
         Convert 2-byte array (little endian) to radians directly.
 
@@ -617,7 +617,8 @@ class DataParser:
         # print(f"hex_value: {hex_value}")
         # Range check
         if hex_value < 0 or hex_value > 4095:
-            logger.warning(f"Servo value out of range: {hex_value} (valid 0–4095)")
+            joint_label = f"Joint ID{joint_id} " if joint_id is not None else ""
+            logger.warning(f"{joint_label}servo value out of range: {hex_value} (valid 0–4095)")
             hex_value = max(0, min(hex_value, 4095))
 
         # Directly map raw value to radians: 0–4095 -> [-π, π]

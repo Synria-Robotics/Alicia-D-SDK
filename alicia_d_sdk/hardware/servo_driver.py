@@ -7,6 +7,7 @@
 import math
 import time
 import threading
+import struct
 from typing import List, Optional, Dict, Union
 import numpy as np
 
@@ -28,6 +29,54 @@ class ServoDriver:
 
     # Command IDs
     CMD_JOINT = 0x06       # Arm joint angle feedback and control
+    CMD_HLS_CURRENT = 0x07  # HLS舵机电流模式调试命令
+    FUNC_ADVANCED_CURRENT_CONTROL = 0x21  # 0x06 下的高级电流控制功能
+    FUNC_CURRENT_POSITION_CONTROL = 0x22  # 0x06 下的电流模式位置控制功能
+
+    GRAVITY_COMP_ACTION_DISABLE = 0x00
+    GRAVITY_COMP_ACTION_ENABLE = 0x01
+    GRAVITY_COMP_ACTION_GET_STATUS = 0x02
+    GRAVITY_COMP_ACTION_PREVIEW_MODEL = 0x03
+
+    CURRENT_POSITION_ACTION_DISABLE = 0x00
+    CURRENT_POSITION_ACTION_ENABLE = 0x01
+    CURRENT_POSITION_ACTION_SET_TARGETS = 0x02
+    CURRENT_POSITION_ACTION_GET_STATUS = 0x03
+    CURRENT_POSITION_ACTION_PREVIEW_ID3_PREPOSE = 0x04
+    CURRENT_POSITION_ACTION_GET_DEBUG = 0x05
+
+    CURRENT_POSITION_STATE_NAMES = {
+        0: "OFF",
+        1: "ARMED",
+        2: "ACTIVE",
+        3: "FAULT",
+    }
+    CURRENT_POSITION_FAULT_NAMES = {
+        0: "NONE",
+        1: "INVALID_TARGET",
+        2: "NOT_ARMED",
+        3: "UNSUPPORTED_ACTION",
+        4: "NOT_TEACH_ARM",
+        5: "FEEDBACK_TIMEOUT",
+        6: "MODEL_UNAVAILABLE",
+        7: "OVER_TEMPERATURE",
+        8: "SPEED_LIMIT",
+    }
+
+    GRAVITY_COMP_STATE_NAMES = {
+        0: "OFF",
+        1: "PENDING",
+        2: "ACTIVE",
+        3: "FAULT",
+        4: "MODEL_UNAVAILABLE",
+    }
+    GRAVITY_COMP_FAULT_NAMES = {
+        0: "NONE",
+        1: "NOT_TEACH_ARM",
+        2: "OVER_TEMPERATURE",
+        3: "FEEDBACK_TIMEOUT",
+        4: "MODEL_UNAVAILABLE",
+    }
 
     # Gripper type configuration
     GRI_MAX_50MM = 3290
@@ -322,6 +371,511 @@ class ServoDriver:
             self.serial_comm._hex_print("Send combined control", frame)
 
         return result
+
+    def set_single_joint_position(self, joint_id: int, position: int, speed: int = 50) -> bool:
+        """以原始位置模式只移动一个示教臂关节。
+
+        该接口对应 STM32 的 ``0x06/0x04`` 单关节位置控制协议。它不会改写
+        其他五个关节的目标位置；调用前应确保电流控制和重力补偿已经关闭。
+
+        :param joint_id: 示教臂关节 ID，范围 1~6。
+        :param position: 目标位置，范围 0~4095。
+        :param speed: HLS 原始速度值。建议先使用较小数值，例如 50。
+        :return: 帧是否成功发送到串口。
+        """
+        if joint_id < 1 or joint_id > self.joint_count:
+            raise ValueError(f"joint_id must be in 1~{self.joint_count}: {joint_id}")
+        if position < 0 or position > 4095:
+            raise ValueError(f"position must be in 0~4095: {position}")
+        if speed < 0 or speed > 0xFFFF:
+            raise ValueError(f"speed must be in 0~65535: {speed}")
+
+        frame = [
+            self.FRAME_HEADER,
+            self.CMD_JOINT,
+            0x04,
+            0x05,
+            joint_id,
+            position & 0xFF,
+            (position >> 8) & 0xFF,
+            speed & 0xFF,
+            (speed >> 8) & 0xFF,
+            0x00,
+            self.FRAME_FOOTER,
+        ]
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return self.serial_comm.send_data(frame)
+
+    def hls_set_current_mode(self, servo_id: int) -> bool:
+        """
+        将指定HLS舵机切换到电流模式。
+
+        :param servo_id: 舵机ID，当前标定主要使用2或3
+        :return: 串口发送是否成功
+        """
+        frame = self._build_hls_current_frame(servo_id=servo_id, action="current_mode")
+        return self.serial_comm.send_data(frame)
+
+    def hls_write_current(self, servo_id: int, current: int) -> bool:
+        """
+        给指定HLS舵机写目标电流。
+
+        current使用固件侧同样的单位，负数代表反向电流，固件负责限幅和编码。
+        :param servo_id: 舵机ID，当前标定主要使用2或3
+        :param current: 目标电流，建议标定阶段先控制在-200到200之间
+        :return: 串口发送是否成功
+        """
+        frame = self._build_hls_current_frame(
+            servo_id=servo_id,
+            action="write_current",
+            current=current,
+        )
+        return self.serial_comm.send_data(frame)
+
+    def hls_set_position_mode(self, servo_id: int) -> bool:
+        """
+        将指定HLS舵机切回位置模式。
+
+        退出标定时应先写0电流，再调用本函数，避免机械臂突然掉落。
+        :param servo_id: 舵机ID
+        :return: 串口发送是否成功
+        """
+        frame = self._build_hls_current_frame(servo_id=servo_id, action="position_mode")
+        return self.serial_comm.send_data(frame)
+
+    def hls_calibrate_current_position(self, servo_id: int) -> bool:
+        """
+        将指定 HLS 舆机的当前位置重标定为内部中位 2048。
+
+        由 STM32 转发 Feetech HLS 的 0x0B 位置校准指令。该操作会修改舆机零点，
+        只能在机械臂被固定于 URDF q=0 姿态后调用。上层需负责确保重力补偿已关闭且关节不会移动。
+
+        :param servo_id: 舆机 ID，示教臂为 1~6
+        :return: 校准命令是否成功写入上位机串口
+        """
+        frame = self._build_hls_current_frame(servo_id=servo_id, action="calibrate_position")
+        return self.serial_comm.send_data(frame)
+
+    def hls_stop_current_test(self, servo_id: int) -> bool:
+        """
+        安全结束单个舵机的电流测试。
+
+        顺序固定为：先写0电流，再切回位置模式。两个命令之间留一点时间，
+        让固件侧舵机总线有机会发送上一帧。
+        :param servo_id: 舵机ID
+        :return: 两条命令是否都发送成功
+        """
+        ok_zero = self.hls_write_current(servo_id, 0)
+        time.sleep(0.05)
+        ok_mode = self.hls_set_position_mode(servo_id)
+        return ok_zero and ok_mode
+
+    def set_gravity_compensation(self, enabled: bool, timeout: float = 1.0) -> Optional[Dict]:
+        """
+        手动开启或关闭 STM32 板端重力补偿。
+
+        此命令由 STM32 负责切换 ID2/ID3/ID5 的电流模式、计算重力矩并安全退出；
+        SDK 不直接向单个 HLS 舵机写补偿电流。
+
+        :param enabled: True 开启补偿，False 关闭并恢复位置模式。
+        :param timeout: 等待 ACK 的最大时间（秒）。
+        :return: 状态字典，超时或发送失败时返回 None。
+        """
+        return self._gravity_compensation_transaction(
+            self.GRAVITY_COMP_ACTION_ENABLE if enabled else self.GRAVITY_COMP_ACTION_DISABLE,
+            timeout,
+        )
+
+    def get_gravity_compensation_status(self, timeout: float = 1.0) -> Optional[Dict]:
+        """获取板端重力补偿状态及当前实际写入 ID2/ID3/ID5 的电流。"""
+        return self._gravity_compensation_transaction(
+            self.GRAVITY_COMP_ACTION_GET_STATUS,
+            timeout,
+        )
+
+    def preview_gravity_compensation(self, timeout: float = 1.0) -> Optional[Dict]:
+        """
+        只计算板端模型结果，不切换模式、不向舵机写电流。
+
+        返回本次参与计算的 position、q2/q3/q5、tau2/tau3/tau5 和理论电流。
+        """
+        return self._gravity_compensation_transaction(
+            self.GRAVITY_COMP_ACTION_PREVIEW_MODEL,
+            timeout,
+        )
+
+    def enable_current_position_control(self, timeout: float = 1.0) -> Optional[Dict]:
+        """开启 0x06/0x22，并将当前六关节姿态锁存为位置目标。"""
+        return self._current_position_transaction(self.CURRENT_POSITION_ACTION_ENABLE, timeout)
+
+    def disable_current_position_control(self, timeout: float = 1.0) -> Optional[Dict]:
+        """关闭 0x06/0x22 电流位置控制状态。"""
+        return self._current_position_transaction(self.CURRENT_POSITION_ACTION_DISABLE, timeout)
+
+    def set_current_position_targets(self, positions: List[int], timeout: float = 1.0) -> Optional[Dict]:
+        """
+        设置六关节的 position 目标（0~4095）。
+
+        当前阶段 ID2 使用实时重力补偿，ID3 使用重力前馈加位置电流控制，ID5 锁存腕部姿态。
+        """
+        if len(positions) != 6:
+            raise ValueError(f"Expected 6 target positions, got {len(positions)}")
+        if any(not isinstance(position, (int, np.integer)) or position < 0 or position > 4095 for position in positions):
+            raise ValueError("Each target position must be an integer in [0, 4095]")
+        return self._current_position_transaction(
+            self.CURRENT_POSITION_ACTION_SET_TARGETS,
+            timeout,
+            positions=[int(position) for position in positions],
+        )
+
+    def get_current_position_control_status(self, timeout: float = 1.0) -> Optional[Dict]:
+        """读取 0x06/0x22 的状态、板端目标和 ID2/ID3/ID5 实时电流。"""
+        return self._current_position_transaction(self.CURRENT_POSITION_ACTION_GET_STATUS, timeout)
+
+    def get_current_position_control_debug(self, timeout: float = 1.0) -> Optional[Dict]:
+        """只读获取 ID3 的内部参考、速度、积分和破静摩擦诊断项。"""
+        return self._current_position_transaction(self.CURRENT_POSITION_ACTION_GET_DEBUG, timeout)
+
+    def preview_current_position_id3_prepose(self, timeout: float = 1.0) -> Optional[Dict]:
+        """
+        预览协同控制的 ID3 预备姿态，不会写入新目标或驱动机械臂移动。
+
+        板端在 ID3 当前值附近搜索，并返回模型预测能降低 |ID2 重力电流|
+        的 ID3 目标位置。调用方应显示结果并由操作者确认后再下发目标。
+        """
+        return self._current_position_transaction(
+            self.CURRENT_POSITION_ACTION_PREVIEW_ID3_PREPOSE,
+            timeout,
+        )
+
+    def _current_position_transaction(self,
+                                      action: int,
+                                      timeout: float,
+                                      positions: Optional[List[int]] = None) -> Optional[Dict]:
+        """独占串口完成一次 0x06/0x22 请求/响应。"""
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+
+        was_update_thread_running = self.is_update_thread_running()
+        if was_update_thread_running:
+            self.stop_update_thread()
+
+        try:
+            if hasattr(self.serial_comm, "_rx_buffer"):
+                self.serial_comm._rx_buffer.clear()
+            if getattr(self.serial_comm, "serial_port", None) is not None:
+                self.serial_comm.serial_port.reset_input_buffer()
+
+            frame = self._build_current_position_frame(action, positions)
+            if not self.serial_comm.send_data(frame):
+                return None
+
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                response = self.serial_comm.read_frame()
+                if response is None:
+                    time.sleep(0.002)
+                    continue
+                if (len(response) < 7 or response[1] != self.CMD_JOINT
+                        or response[2] != self.FUNC_CURRENT_POSITION_CONTROL):
+                    continue
+                if response[4] != action:
+                    continue
+                return self._parse_current_position_response(response)
+
+            logger.warning("Timed out waiting for current position control response")
+            return None
+        finally:
+            if was_update_thread_running and self.serial_comm.is_connected():
+                self.start_update_thread()
+
+    def _build_current_position_frame(self,
+                                      action: int,
+                                      positions: Optional[List[int]] = None) -> List[int]:
+        """构建 0x06/0x22 电流位置控制帧。"""
+        if action not in (
+            self.CURRENT_POSITION_ACTION_DISABLE,
+            self.CURRENT_POSITION_ACTION_ENABLE,
+            self.CURRENT_POSITION_ACTION_SET_TARGETS,
+            self.CURRENT_POSITION_ACTION_GET_STATUS,
+            self.CURRENT_POSITION_ACTION_PREVIEW_ID3_PREPOSE,
+            self.CURRENT_POSITION_ACTION_GET_DEBUG,
+        ):
+            raise ValueError(f"Unsupported current position action: {action}")
+
+        data = [action]
+        if action == self.CURRENT_POSITION_ACTION_SET_TARGETS:
+            if positions is None or len(positions) != 6:
+                raise ValueError("SET_TARGETS requires six positions")
+            for position in positions:
+                data.extend([position & 0xFF, (position >> 8) & 0xFF])
+        elif positions is not None:
+            raise ValueError("Only SET_TARGETS accepts positions")
+
+        frame = [
+            self.FRAME_HEADER,
+            self.CMD_JOINT,
+            self.FUNC_CURRENT_POSITION_CONTROL,
+            len(data),
+            *data,
+            0x00,
+            self.FRAME_FOOTER,
+        ]
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return frame
+
+    def _parse_current_position_response(self, frame: List[int]) -> Dict:
+        """解析 0x06/0x22 的位置控制状态回包。"""
+        if (len(frame) < 39 or frame[1] != self.CMD_JOINT
+                or frame[2] != self.FUNC_CURRENT_POSITION_CONTROL or frame[3] not in (33, 35, 45, 46, 52, 56, 58)):
+            raise ValueError("Invalid current position control response frame")
+
+        if frame[3] == 35 and len(frame) < 41:
+            raise ValueError("Truncated extended current position control response frame")
+        if frame[3] == 46 and len(frame) < 52:
+            raise ValueError("Truncated ID2 stall-debug current position control response frame")
+        if frame[3] == 52 and len(frame) < 58:
+            raise ValueError("Truncated ID3 prepose preview response frame")
+        if frame[3] == 56 and len(frame) < 62:
+            raise ValueError("Truncated ID3 controller-debug response frame")
+        if frame[3] == 58 and len(frame) < 64:
+            raise ValueError("Truncated extended ID3 controller-debug response frame")
+        if frame[3] == 45 and len(frame) < 51:
+            raise ValueError("Truncated ID2 current position control response frame")
+
+        action = frame[4]
+        state = frame[5]
+        fault = frame[6]
+        targets = list(struct.unpack_from("<6H", bytes(frame), 7))
+        actual_id3, current_id3, error_id3_ticks = struct.unpack_from("<Hhh", bytes(frame), 19)
+        actual_id5, current_id5, error_id5_ticks = struct.unpack_from("<Hhh", bytes(frame), 25)
+        gravity_current_id3, pd_current_id3, bias_current_id3 = struct.unpack_from("<hhh", bytes(frame), 31)
+        current_id2 = struct.unpack_from("<h", bytes(frame), 37)[0] if frame[3] == 35 else 0
+        actual_id2, error_id2_ticks, gravity_current_id2, pd_current_id2, bias_current_id2 = (
+            struct.unpack_from("<Hhhhh", bytes(frame), 39)
+            if frame[3] in (45, 46, 52, 56, 58) else (0, 0, 0, 0, 0)
+        )
+        id2_stall_cycles = frame[49] if frame[3] in (46, 52, 56, 58) else 0
+        if frame[3] in (45, 46, 52, 56, 58):
+            current_id2 = struct.unpack_from("<h", bytes(frame), 37)[0]
+        id3_prepose_target = None
+        predicted_id2_gravity_current = None
+        id3_prepose_offset_ticks = None
+        if frame[3] == 52:
+            id3_prepose_target, predicted_id2_gravity_current, id3_prepose_offset_ticks = (
+                struct.unpack_from("<Hhh", bytes(frame), 50)
+            )
+        id3_reference = None
+        id3_control_error_ticks = None
+        id3_filtered_velocity_ticks_per_second = None
+        id3_integral_current = None
+        id3_breakaway_current = None
+        id3_stall_cycles = 0
+        id3_control_flags = 0
+        if frame[3] == 56:
+            (
+                id3_reference,
+                id3_control_error_ticks,
+                id3_filtered_velocity_ticks_per_second,
+                id3_integral_current,
+                id3_breakaway_current,
+                id3_stall_cycles,
+                id3_control_flags,
+            ) = (*struct.unpack_from("<Hhhhh", bytes(frame), 50), 0, 0)
+        elif frame[3] == 58:
+            (
+                id3_reference,
+                id3_control_error_ticks,
+                id3_filtered_velocity_ticks_per_second,
+                id3_integral_current,
+                id3_breakaway_current,
+                id3_stall_cycles,
+                id3_control_flags,
+            ) = struct.unpack_from("<HhhhhBB", bytes(frame), 50)
+        return {
+            "action": action,
+            "state": state,
+            "state_name": self.CURRENT_POSITION_STATE_NAMES.get(state, f"UNKNOWN({state})"),
+            "fault": fault,
+            "fault_name": self.CURRENT_POSITION_FAULT_NAMES.get(fault, f"UNKNOWN({fault})"),
+            "targets": targets,
+            "current_id2": current_id2,
+            "actual_id2": actual_id2,
+            "error_id2_ticks": error_id2_ticks,
+            "gravity_current_id2": gravity_current_id2,
+            "pd_current_id2": pd_current_id2,
+            "bias_current_id2": bias_current_id2,
+            "stall_cycles_id2": id2_stall_cycles,
+            "actual_id3": actual_id3,
+            "current_id3": current_id3,
+            "error_id3_ticks": error_id3_ticks,
+            "actual_id5": actual_id5,
+            "current_id5": current_id5,
+            "error_id5_ticks": error_id5_ticks,
+            "gravity_current_id3": gravity_current_id3,
+            "pd_current_id3": pd_current_id3,
+            "bias_current_id3": bias_current_id3,
+            "id3_prepose_target": id3_prepose_target,
+            "predicted_id2_gravity_current": predicted_id2_gravity_current,
+            "id3_prepose_offset_ticks": id3_prepose_offset_ticks,
+            "id3_reference": id3_reference,
+            "id3_control_error_ticks": id3_control_error_ticks,
+            "id3_filtered_velocity_ticks_per_second": id3_filtered_velocity_ticks_per_second,
+            "id3_integral_current": id3_integral_current,
+            "id3_breakaway_current": id3_breakaway_current,
+            "id3_stall_cycles": id3_stall_cycles,
+            "id3_control_flags": id3_control_flags,
+        }
+
+    def _gravity_compensation_transaction(self,
+                                          action: int,
+                                          timeout: float) -> Optional[Dict]:
+        """独占串口完成一次 0x06/0x21 请求/响应，避免状态线程抢走 ACK。"""
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+
+        was_update_thread_running = self.is_update_thread_running()
+        if was_update_thread_running:
+            self.stop_update_thread()
+
+        try:
+            if hasattr(self.serial_comm, "_rx_buffer"):
+                self.serial_comm._rx_buffer.clear()
+            if getattr(self.serial_comm, "serial_port", None) is not None:
+                self.serial_comm.serial_port.reset_input_buffer()
+
+            frame = self._build_gravity_compensation_frame(action)
+            if not self.serial_comm.send_data(frame):
+                return None
+
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                response = self.serial_comm.read_frame()
+                if response is None:
+                    time.sleep(0.002)
+                    continue
+                if (len(response) < 7 or response[1] != self.CMD_JOINT
+                        or response[2] != self.FUNC_ADVANCED_CURRENT_CONTROL):
+                    continue
+                if response[4] != action:
+                    continue
+                return self._parse_gravity_compensation_response(response)
+
+            logger.warning("Timed out waiting for gravity compensation response")
+            return None
+        finally:
+            if was_update_thread_running and self.serial_comm.is_connected():
+                self.start_update_thread()
+
+    def _build_gravity_compensation_frame(self, action: int) -> List[int]:
+        """构建 AA 06 21 01 action crc FF 板端重力补偿协议帧。"""
+        if action not in (
+            self.GRAVITY_COMP_ACTION_DISABLE,
+            self.GRAVITY_COMP_ACTION_ENABLE,
+            self.GRAVITY_COMP_ACTION_GET_STATUS,
+            self.GRAVITY_COMP_ACTION_PREVIEW_MODEL,
+        ):
+            raise ValueError(f"Unsupported gravity compensation action: {action}")
+
+        frame = [
+            self.FRAME_HEADER,
+            self.CMD_JOINT,
+            self.FUNC_ADVANCED_CURRENT_CONTROL,
+            0x01,
+            action,
+            0x00,
+            self.FRAME_FOOTER,
+        ]
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return frame
+
+    def _parse_gravity_compensation_response(self, frame: List[int]) -> Dict:
+        """解析 0x06/0x21 状态或纯模型预览回包。"""
+        if (len(frame) < 15 or frame[1] != self.CMD_JOINT
+                or frame[2] != self.FUNC_ADVANCED_CURRENT_CONTROL):
+            raise ValueError("Invalid gravity compensation response frame")
+
+        action = frame[4]
+        payload_length = frame[3]
+        state = frame[5]
+        fault = frame[6]
+        current_id2, current_id3, current_id5 = struct.unpack_from("<hhh", bytes(frame), 7)
+        result = {
+            "action": action,
+            "control": action,
+            "state": state,
+            "state_name": self.GRAVITY_COMP_STATE_NAMES.get(state, f"UNKNOWN({state})"),
+            "fault": fault,
+            "fault_name": self.GRAVITY_COMP_FAULT_NAMES.get(fault, f"UNKNOWN({fault})"),
+            "current_id2": current_id2,
+            "current_id3": current_id3,
+            "current_id5": current_id5,
+        }
+
+        if action == self.GRAVITY_COMP_ACTION_PREVIEW_MODEL:
+            if payload_length != 45 or len(frame) < 51:
+                raise ValueError("Invalid gravity compensation preview response length")
+            unpacked = struct.unpack_from("<6Hffffff", bytes(frame), 13)
+            result.update({
+                "positions": list(unpacked[:6]),
+                "q2": unpacked[6],
+                "q3": unpacked[7],
+                "q5": unpacked[8],
+                "tau2": unpacked[9],
+                "tau3": unpacked[10],
+                "tau5": unpacked[11],
+            })
+        elif payload_length != 9:
+            raise ValueError("Invalid gravity compensation status response length")
+
+        return result
+
+    def _build_hls_current_frame(self,
+                                 servo_id: int,
+                                 action: str,
+                                 current: int = 0) -> List[int]:
+        """
+        构造HLS电流测试用户协议帧。
+
+        帧格式：
+        AA 07 func len data... crc FF
+        func=0x00：进入电流模式，data=[id]
+        func=0x01：写目标电流，data=[id, current_l, current_h]
+        func=0x02：切回位置模式，data=[id]
+        """
+        if servo_id < 1 or servo_id > 253:
+            raise ValueError(f"servo_id out of range: {servo_id}")
+
+        action_to_func = {
+            "current_mode": 0x00,
+            "write_current": 0x01,
+            "position_mode": 0x02,
+            "calibrate_position": 0x03,
+        }
+        if action not in action_to_func:
+            raise ValueError(f"Unsupported HLS current action: {action}")
+
+        func = action_to_func[action]
+        data = [servo_id & 0xFF]
+
+        if action == "write_current":
+            # 这里发送有符号int16的小端原始值，固件再转换为HLS的方向位编码。
+            if current < -32768 or current > 32767:
+                raise ValueError(f"current out of int16 range: {current}")
+            current_u16 = current & 0xFFFF
+            data.extend([current_u16 & 0xFF, (current_u16 >> 8) & 0xFF])
+
+        frame = [
+            self.FRAME_HEADER,
+            self.CMD_HLS_CURRENT,
+            func,
+            len(data),
+            *data,
+            0x00,
+            self.FRAME_FOOTER,
+        ]
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return frame
 
     def _build_joint_frame(self,
                            joint_angles: Optional[List[float]] = None,
