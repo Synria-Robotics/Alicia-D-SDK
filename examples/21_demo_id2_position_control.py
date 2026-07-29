@@ -27,9 +27,15 @@ def print_status(prefix: str, status: dict) -> None:
     )
 
 
+def is_joint_settled(status: dict, joint: str, window_ticks: int = 3) -> bool:
+    """判断指定关节是否已进入位置误差窗口。"""
+    return abs(status[f"error_{joint}_ticks"]) <= window_ticks
+
+
 def main(args: argparse.Namespace) -> None:
     driver = ServoDriver(port=args.port, debug_mode=args.debug)
     enabled = False
+    id2_reached_reported = False
 
     try:
         if not driver.connect():
@@ -66,6 +72,13 @@ def main(args: argparse.Namespace) -> None:
             if status is None:
                 raise RuntimeError("测试期间未收到 0x22 状态回包")
             print_status("ID2 控制中", status)
+            if is_joint_settled(status, "id2") and not id2_reached_reported:
+                id2_reached_reported = True
+                id3_state = "已稳定" if is_joint_settled(status, "id3") else "仍在修正"
+                print(
+                    f"ID2 已到位：误差 {status['error_id2_ticks']:+d} tick。"
+                    f"ID3 当前误差 {status['error_id3_ticks']:+d} tick，{id3_state}。"
+                )
             if status["state_name"] == "FAULT":
                 raise RuntimeError(f"板端进入故障状态: {status['fault_name']}")
             if abs(status["error_id2_ticks"]) > args.max_error:
