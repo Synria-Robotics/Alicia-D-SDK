@@ -12,7 +12,10 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import numpy as np
 
-from alicia_d_sdk.utils.trajectory_utils import record_waypoints_manual
+from alicia_d_sdk.utils.trajectory_utils import (
+    prepare_position_mode_for_teaching,
+    record_waypoints_manual,
+)
 from alicia_d_sdk.utils import precise_sleep
 
 
@@ -42,6 +45,10 @@ class DragTeaching:
         """自动模式 - 连续记录"""
         print("\n=== Auto Mode ===")
         print("After disabling torque, drag the robot arm and the system will automatically record the trajectory")
+
+        if not prepare_position_mode_for_teaching(self.controller):
+            print("[安全] 未确认位置模式，已取消录制")
+            return []
 
         input("Press Enter to start...")
         self.controller.torque_control('off')
@@ -87,8 +94,11 @@ class DragTeaching:
             thread.join(timeout=1.0)
 
         finally:
-            self.controller.torque_control('on')
-            print("[Safety] Torque re-enabled")
+            if not prepare_position_mode_for_teaching(self.controller):
+                print("[安全] 未确认位置模式，扭矩保持关闭")
+            else:
+                self.controller.torque_control('on')
+                print("[Safety] Torque re-enabled")
 
         print(f"[Complete] Recorded {len(trajectory)} points")
         return trajectory
@@ -198,54 +208,21 @@ class DragTeaching:
         if not data:
             return
 
-        # 获取目标速度和加速度参数
-        speed_deg_s = getattr(self.args, "speed_deg_s", 10)  # 目标速度，度/秒
-        acceleration_deg_s2 = 22.0  # 加速度，度/秒²
-
-        def _sleep_based_on_velocity(point: Dict[str, Any], prev_joints: Optional[np.ndarray]):
-            """
-            Calculate wait time based on joint angle difference, target velocity and acceleration.
-            
-            :param point: Current waypoint with joint angles
-            :param prev_joints: Previous waypoint joint angles, None for first point
-            :return: Wait time in seconds
-            """
-            if prev_joints is None:
-                return 0.0
-
-            # Convert joint angles from radians to degrees
-            current_joints = np.array(point["q"])
-            prev_joints_array = np.array(prev_joints)
-
-            # Calculate angle difference for each joint (in degrees)
-            angle_diff_deg = np.abs(np.degrees(current_joints - prev_joints_array))
-
-            # Use a robust diff to avoid being dominated by a single joint
-            # 75th percentile lets most joints move smoothly while ignoring extreme outliers
-            effective_angle_diff = float(np.percentile(angle_diff_deg, 75))
-
-            if effective_angle_diff < 1e-6:  # Very small movement, no wait needed
-                return 0.0
-
-            # Calculate motion time based on acceleration and velocity
-            # If distance is large enough to reach target velocity
-            min_distance_to_reach_velocity = (speed_deg_s ** 2) / acceleration_deg_s2
-
-            if effective_angle_diff >= min_distance_to_reach_velocity:
-                # Trapezoidal profile: accelerate, constant velocity, decelerate
-                # Accelerate time: t_acc = v/a
-                # Accelerate distance: s_acc = v²/(2a)
-                # Constant velocity distance: s_const = Δθ - 2*s_acc = Δθ - v²/a
-                # Constant velocity time: t_const = s_const/v = (Δθ - v²/a)/v = Δθ/v - v/a
-                # Total time: t = 2*t_acc + t_const = 2*v/a + Δθ/v - v/a = v/a + Δθ/v
-                motion_time = speed_deg_s / acceleration_deg_s2 + effective_angle_diff / speed_deg_s
-            else:
-                # Triangular profile: accelerate then decelerate (never reach max velocity)
-                # Each half: Δθ/2 = 0.5 * a * (t/2)², so Δθ = a * t²/4
-                # Therefore: t = 2 * sqrt(Δθ / a)
-                motion_time = 2.0 * np.sqrt(effective_angle_diff / acceleration_deg_s2)
-
-            return motion_time
+        speed_deg_s = getattr(self.args, "speed_deg_s", 10)
+        manual_speed_deg_s = getattr(
+            self.args, "manual_speed_deg_s", 0.5
+        )
+        auto_speed_limit_deg_s = getattr(
+            self.args, "auto_speed_limit_deg_s", 90.0
+        )
+        playback_rate = getattr(self.args, "playback_rate", 1.0)
+        if auto_speed_limit_deg_s <= 0:
+            raise ValueError("auto_speed_limit_deg_s must be positive")
+        if manual_speed_deg_s <= 0:
+            raise ValueError("manual_speed_deg_s must be positive")
+        if playback_rate <= 0:
+            raise ValueError("playback_rate must be positive")
+        arrival_tolerance = np.deg2rad(3.0)
 
         print(f"\n=== Trajectory Replay ===")
         print(f"Replay mode: {self.args.mode}")
@@ -255,19 +232,53 @@ class DragTeaching:
 
         print("[Replay] Starting...")
 
+        if not prepare_position_mode_for_teaching(self.controller):
+            print("[安全] 未确认位置模式，已取消回放")
+            return
+
         # Move to starting point
         first_point = data[0]
-        print("[Replay] Moving to starting point (speed 30)...")
+        print(f"[Replay] Moving to starting point (speed {speed_deg_s} deg/s)...")
         try:
-            self.controller.set_robot_state(
+            current_joints = self.controller.get_robot_state("joint")
+            first_joints = np.asarray(first_point["q"], dtype=float)
+            if current_joints is None:
+                raise RuntimeError("Unable to read current joints before replay")
+            measured_travel_deg = float(np.max(np.abs(
+                np.degrees(first_joints - np.asarray(current_joints, dtype=float))
+            )))
+            # Immediately after recording, the SDK feedback cache can still
+            # contain an older sample. The final recorded point is a reliable
+            # conservative reference for the move back to the first point.
+            recorded_travel_deg = float(np.max(np.abs(np.degrees(
+                first_joints - np.asarray(data[-1]["q"], dtype=float)
+            ))))
+            start_travel_deg = max(measured_travel_deg, recorded_travel_deg)
+            # Add both fixed transition time and a low-speed scale margin. A
+            # nominal 1 deg/s command maps to about 0.97 deg/s in the register.
+            start_timeout = max(
+                15.0,
+                start_travel_deg / max(speed_deg_s * 0.9, 0.01) + 8.0,
+            )
+            print(
+                f"[Replay] Starting-point travel {start_travel_deg:.1f} deg, "
+                f"timeout {start_timeout:.1f} s"
+            )
+            reached = self.controller.set_robot_state(
                 target_joints=first_point["q"],
-                gripper_value=first_point.get("grip", 0.0),
+                gripper_value=None,
                 joint_format='rad',
-                speed_deg_s=30,
+                speed_deg_s=speed_deg_s,
+                tolerance=arrival_tolerance,
+                timeout=start_timeout,
                 wait_for_completion=True,
             )
+            if not reached:
+                print("[Warning] Starting point was not reached; replay cancelled")
+                return
         except Exception as e:
             print(f"[Warning] Failed to move to starting point: {e}")
+            return
 
         time.sleep(0.001)
         print("[Replay] Starting trajectory playback...")
@@ -276,55 +287,108 @@ class DragTeaching:
         prev_joints = data[0]["q"]
 
         if self.args.mode == 'auto':
-            # Auto mode: use direct setting for fast replay
-            print("[Replay] Using direct setting mode (fast)")
+            # Follow the recorded timestamps directly. The low-speed setting
+            # used to approach the first point must not stretch the trajectory.
+            print(
+                "[Replay] Using original-timing streaming mode "
+                f"({playback_rate:.2f}x, speed limit "
+                f"{auto_speed_limit_deg_s:.1f} deg/s)"
+            )
+            playback_start = time.perf_counter()
+            scheduled_time = 0.0
             for i, point in enumerate(data):
                 try:
+                    if i > 0:
+                        previous = data[i - 1]
+                        recorded_dt = max(
+                            0.0,
+                            float(point.get("t", 0.0)) -
+                            float(previous.get("t", 0.0)),
+                        )
+                        scheduled_time += recorded_dt / playback_rate
+                        precise_sleep(
+                            scheduled_time -
+                            (time.perf_counter() - playback_start),
+                            spin_threshold=0.002,
+                        )
+
                     self.controller.set_robot_state(
                         target_joints=point["q"],
-                        gripper_value=point.get("grip", 0.0),
+                        gripper_value=None,
                         joint_format='rad',
-                        speed_deg_s=speed_deg_s,
-                        tolerance=0.3,
-                        wait_for_completion=True,
+                        speed_deg_s=auto_speed_limit_deg_s,
+                        wait_for_completion=False,
                     )
                     prev_joints = point["q"]
 
-                    print(f"[Replay] {i+1}/{len(data)}")
+                    if i == len(data) - 1 or i % max(1, len(data) // 20) == 0:
+                        print(f"[Replay] {i+1}/{len(data)}")
                 except Exception as e:
                     print(f"[Error] Failed to replay point {i+1}: {e}")
+
+            final_point = data[-1]
+            final_joints = np.asarray(final_point["q"], dtype=float)
+            current_joints = self.controller.get_robot_state("joint")
+            final_timeout = 10.0
+            if current_joints is not None:
+                final_travel_deg = float(np.max(np.abs(np.degrees(
+                    final_joints - np.asarray(current_joints, dtype=float)
+                ))))
+                final_timeout = max(
+                    10.0,
+                    final_travel_deg / auto_speed_limit_deg_s + 5.0,
+                )
+            if not self.controller.set_robot_state(
+                target_joints=final_point["q"],
+                gripper_value=None,
+                joint_format='rad',
+                speed_deg_s=auto_speed_limit_deg_s,
+                tolerance=arrival_tolerance,
+                timeout=final_timeout,
+                wait_for_completion=True,
+            ):
+                print("[Warning] Final replay point was not reached")
 
         elif self.args.mode == 'manual':
-            # Manual mode: use interpolated motion for smooth replay
-            print("[Replay] Using interpolated motion mode (smooth)")
-            for i, point in enumerate(data):
+            print(
+                "[Replay] Using feedback-based waypoint mode "
+                f"({manual_speed_deg_s:.2f} deg/s)"
+            )
+            # The first point was reached above; start from the second point to
+            # avoid sending the same target twice and pausing unnecessarily.
+            for i, point in enumerate(data[1:], start=2):
                 try:
-                    motion_time = _sleep_based_on_velocity(point, prev_joints if i > 0 else None)
-                    start_time = time.time()
-                    
-                    self.controller.set_robot_state(
-                        target_joints=point["q"],
-                        gripper_value=int(point.get("grip", 0.0)) if point.get("grip") is not None else None,
-                        joint_format='rad',
-                        speed_deg_s=speed_deg_s,
-                        wait_for_completion=False
+                    target_joints = np.asarray(point["q"], dtype=float)
+                    previous_joints = np.asarray(prev_joints, dtype=float)
+                    travel_deg = float(np.max(np.abs(np.degrees(
+                        target_joints - previous_joints
+                    ))))
+                    point_timeout = max(
+                        15.0,
+                        travel_deg /
+                        max(manual_speed_deg_s * 0.9, 0.01) + 8.0,
                     )
-
-                    # Wait based on calculated motion time with speed factor adjustment
-                    # Speed factor accounts for actual vs theoretical time ratio at different speeds
-                    if motion_time > 0:
-                        elapsed = time.time() - start_time
-                        remaining_time = motion_time - elapsed
-                        if remaining_time > 0:
-                            speed_factor = max(1.0, speed_deg_s / 5.0)
-                            time.sleep(remaining_time / speed_factor)
+                    reached = self.controller.set_robot_state(
+                        target_joints=point["q"],
+                        gripper_value=None,
+                        joint_format='rad',
+                        speed_deg_s=manual_speed_deg_s,
+                        tolerance=arrival_tolerance,
+                        timeout=point_timeout,
+                        wait_for_completion=True,
+                    )
+                    if not reached:
+                        print(
+                            f"[Warning] Point {i} was not reached; "
+                            "replay cancelled"
+                        )
+                        return
 
                     prev_joints = point["q"]
-
-                    print(f"[Replay] {i+1}/{len(data)}")
-
+                    print(f"[Replay] {i}/{len(data)}")
                 except Exception as e:
-                    print(f"[Error] Failed to replay point {i+1}: {e}")
+                    print(f"[Error] Failed to replay point {i}: {e}")
+                    return
 
         print("[Replay] Complete")
 

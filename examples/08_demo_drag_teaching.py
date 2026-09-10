@@ -26,14 +26,25 @@ python 08_demo_drag_teaching.py --help
 """
 
 import os
+import sys
 import json
 import time
 import argparse
 import threading
 import numpy as np
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
+# Direct execution from ``examples`` must use this checkout instead of an
+# older package installed in site-packages.
+SDK_ROOT = Path(__file__).resolve().parents[1]
+sdk_root = str(SDK_ROOT)
+if sdk_root in sys.path:
+    sys.path.remove(sdk_root)
+sys.path.insert(0, sdk_root)
+
+import alicia_d_sdk
 from alicia_d_sdk import create_robot
 from robocore.utils.beauty_logger import beauty_print
 
@@ -136,6 +147,7 @@ def main(args):
         return
     
     beauty_print("Drag Teaching Demo", type="module")
+    beauty_print(f"当前 SDK 路径：{Path(alicia_d_sdk.__file__).resolve()}")
     
     # Initialize robot connection
     robot = create_robot(port=args.port)
@@ -146,6 +158,9 @@ def main(args):
             def __init__(self, base_args):
                 self.port = base_args.port
                 self.speed_deg_s = base_args.speed_deg_s
+                self.manual_speed_deg_s = base_args.manual_speed_deg_s
+                self.auto_speed_limit_deg_s = base_args.auto_speed_limit_deg_s
+                self.playback_rate = base_args.playback_rate
                 self.sample_hz = base_args.sample_hz
                 self.mode = None
                 self.save_motion = None
@@ -211,7 +226,13 @@ if __name__ == "__main__":
     
     # Robot configuration
     parser.add_argument('--port', type=str, default="", help="Serial port (e.g. /dev/ttyUSB0 or COM3)")
-    parser.add_argument('--speed_deg_s', type=int, default=15, help="Joint motion speed (degrees/second, default: 15, range: 10-80 deg/s)")
+    parser.add_argument('--speed_deg_s', type=float, default=1.0, help="Joint motion speed (degrees/second, default: 1)")
+    parser.add_argument('--manual_speed_deg_s', type=float, default=0.5,
+                        help="Manual waypoint replay speed (degrees/second, default: 0.5)")
+    parser.add_argument('--auto_speed_limit_deg_s', type=float, default=90.0,
+                        help="Servo speed limit during continuous replay (degrees/second, default: 90)")
+    parser.add_argument('--playback_rate', type=float, default=1.0,
+                        help="Continuous replay rate (default: 1.0, original recorded timing)")
     parser.add_argument('--sample_hz', type=float, default=200.0, help="Sampling frequency (Hz, default: 200.0, only for auto mode)")
 
     # Legacy arguments (kept for backward compatibility, but not used in interactive mode)

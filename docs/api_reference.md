@@ -199,6 +199,26 @@ robot = create_robot()
   
   **返回值：** 成功返回 True，失败返回 False
 
+- `get_control_mode(timeout=1.0)`
+  读取固件当前已应用的公开控制模式，返回 `"position"`、`"current"` 或 `None`。
+
+- `set_control_mode(mode, timeout=2.0)`
+  在 `"position"` 与 `"current"` 之间切换。上电默认位置模式。SDK 会等待设置
+  ACK，并继续回读固件状态；只有确认目标模式已应用才返回 `True`。该接口不等同于
+  `torque_control()`，不会把扭矩开关隐式当作模式切换。
+
+- `get_teleoperation_state(timeout=1.0)` / `set_teleoperation_enabled(enabled, timeout=2.0)`
+  读取或切换位置模式与电流遥操模式。返回状态包含 `enabled`、`active` 和
+  当前 `mode`。
+
+- `get_force_feedback_state(timeout=1.0)`
+  读取力反馈的 `requested`、`effective`、`inhibit_mask`、抑制原因、遥操状态和
+  机械锁状态。查询命令不会改变机械臂状态。
+
+- `set_force_feedback_enabled(enabled, timeout=2.0)`
+  幂等设置力反馈请求并等待固件回读确认。关闭力反馈只撤销远端残余力矩，遥操
+  模式下继续保留重力补偿，不等同于关闭整臂扭矩。
+
 - `zero_calibration()`  
   执行归零校准流程：关闭扭矩 → 手动拖动 → 重启扭矩 → 记录零点
 
@@ -227,10 +247,15 @@ robot = create_robot()
   - `"velocity"`: 舵机速度
   - `"self_check"`: 自检状态
   - `"gripper_type"`: 夹爪类型信息
+  - `"control_mode"`: 当前公开控制模式
   - `"torque_on"` / `"torque_off"`: 启用/禁用扭矩
   - `"zero_cali"`: 将当前位置设置为零点
 
 #### 控制：
+- `get_control_mode(timeout: float = 1.0) -> Optional[str]`
+- `set_control_mode(mode: str, timeout: float = 2.0) -> bool`
+- `get_force_feedback_state(timeout: float = 1.0) -> Optional[Dict]`
+- `set_force_feedback_enabled(enabled: bool, timeout: float = 2.0) -> bool`
 - `set_joint_and_gripper(joint_angles: Optional[List[float]] = None, gripper_value: Optional[float] = None, speed_deg_s: int = 10) -> bool`  
   统一方法，可在单个命令中设置关节、夹爪或两者。这是主要的控制方法。
 

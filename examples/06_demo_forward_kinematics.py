@@ -69,7 +69,7 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=str, default="",   help="Serial port (e.g. /dev/ttyUSB0 or COM3)")
     
     parser.add_argument('--version', type=str, default="v5_6", choices=["v5_6"], help="Version")
-    parser.add_argument('--variant', type=str, default="leader", choices=["gripper_50mm", "gripper_100mm", "leader_ur", "leader", "vertical_50mm"], help="Variant")
+    parser.add_argument('--variant', type=str, default="alicia_duo", choices=["alicia_duo", "gripper_50mm", "gripper_100mm", "leader_ur", "leader", "vertical_50mm"], help="Variant")
     parser.add_argument('--model_format', type=str, default="urdf", choices=["urdf", "mjcf"], help="Model format")
 
     parser.add_argument('--base_link', type=str, default="base_link", help="Base link name, world or base_link etc.")

@@ -75,6 +75,15 @@ class DataParser:
             0x02: "100mm",
         }
 
+        # Public control mode state. Only position/current are exposed by SDK.
+        self._control_mode: Optional[str] = None
+        self._control_mode_diagnostics: Optional[Dict] = None
+        self._control_mode_ack: Optional[Dict] = None
+        self._direct_current_ack: Optional[Dict] = None
+        self._physical_diagnostic: Optional[Dict] = None
+        self._tx_diagnostic: Optional[Dict] = None
+        self._force_feedback_state: Optional[Dict] = None
+
         # Event-based synchronization for async data acquisition
         # Events are set when corresponding data is received and parsed
         self._version_event = threading.Event()
@@ -83,6 +92,12 @@ class DataParser:
         self._velocity_event = threading.Event()
         self._self_check_event = threading.Event()
         self._gripper_type_event = threading.Event()
+        self._control_mode_event = threading.Event()
+        self._control_mode_ack_event = threading.Event()
+        self._direct_current_ack_event = threading.Event()
+        self._physical_diagnostic_event = threading.Event()
+        self._tx_diagnostic_event = threading.Event()
+        self._force_feedback_event = threading.Event()
 
         # Mapping from info type to corresponding event
         self._info_event_map = {
@@ -92,6 +107,10 @@ class DataParser:
             "velocity": self._velocity_event,
             "self_check": self._self_check_event,
             "gripper_type": self._gripper_type_event,
+            "control_mode": self._control_mode_event,
+            "physical_diagnostic": self._physical_diagnostic_event,
+            "tx_diagnostic": self._tx_diagnostic_event,
+            "force_feedback": self._force_feedback_event,
         }
 
         # Store self-check (servo health) data
@@ -113,10 +132,18 @@ class DataParser:
             func_code = frame[2]
             if func_code == 0x00:
                 return self._parse_joint_data(frame)
+            elif func_code == 0x20:
+                return self._parse_force_feedback_state(frame)
             elif func_code == 0x01:
                 return self._parse_temperature_data(frame)
             elif func_code == 0x02:
                 return self._parse_velocity_data(frame)
+            elif func_code == 0x24:
+                return self._parse_control_mode_diagnostics(frame)
+            elif func_code == 0x25:
+                return self._parse_physical_diagnostic(frame)
+            elif func_code == 0x26:
+                return self._parse_tx_diagnostic(frame)
             else:
                 if self.debug_mode:
                     logger.debug(f"Unhandled function code in CMD_JOINT: 0x{func_code:02X}")
@@ -134,6 +161,12 @@ class DataParser:
             return self._parse_error_data(frame)
         elif cmd_id == self.CMD_SELF_CHECK:
             return self._parse_self_check_data(frame)
+        elif cmd_id == self.CMD_TORQUE:
+            if frame[2] == 0x01:
+                return self._parse_control_mode_ack(frame)
+            if frame[2] == 0x02:
+                return self._parse_direct_current_ack(frame)
+            return None
         else:
             if self.debug_mode:
                 logger.debug(f"Unhandled command ID: 0x{cmd_id:02X}")
@@ -155,7 +188,7 @@ class DataParser:
         """
         Unified getter for parsed information, for cooperation with high-level APIs.
 
-        :param info_type: 'joint_gripper' | 'joint' | 'gripper' | 'version' | 'temperature' | 'velocity' | 'self_check' | 'gripper_type'
+        :param info_type: 'joint_gripper' | 'joint' | 'gripper' | 'version' | 'temperature' | 'velocity' | 'self_check' | 'gripper_type' | 'control_mode'
         :return: Parsed data for the given type, or None if unavailable
         """
         with self._lock:
@@ -195,8 +228,251 @@ class DataParser:
                     self._gripper_type,
                     f"unknown(0x{self._gripper_type:02X})",
                 )
+            elif info_type == "control_mode":
+                return self._control_mode
+            elif info_type == "control_mode_diagnostics":
+                return copy.deepcopy(self._control_mode_diagnostics)
+            elif info_type == "direct_current_ack":
+                return copy.deepcopy(self._direct_current_ack)
+            elif info_type == "physical_diagnostic":
+                return copy.deepcopy(self._physical_diagnostic)
+            elif info_type == "tx_diagnostic":
+                return copy.deepcopy(self._tx_diagnostic)
+            elif info_type == "force_feedback":
+                return copy.deepcopy(self._force_feedback_state)
             else:
                 raise ValueError(f"Unsupported info type: {info_type}")
+
+    def get_control_mode_ack(self) -> Optional[Dict]:
+        """Return the latest mode-set acknowledgement."""
+        with self._lock:
+            return copy.deepcopy(self._control_mode_ack)
+
+    def get_direct_current_ack(self) -> Optional[Dict]:
+        """Return the latest direct-current acknowledgement."""
+        with self._lock:
+            return copy.deepcopy(self._direct_current_ack)
+
+    def _parse_force_feedback_state(self, frame: List[int]) -> Optional[Dict]:
+        """解析 CMD=0x06、FUNC=0x20 的公开力反馈状态。"""
+        data_len = frame[3]
+        if data_len < 6 or len(frame) < 4 + data_len + 2:
+            logger.warning("力反馈状态帧长度不正确")
+            return None
+        data = frame[4:4 + data_len]
+        inhibit_mask = data[3] & 0xFF
+        reason_names = (
+            (0, "未进入遥操"),
+            (1, "机械锁定"),
+            (2, "D-M链路超时"),
+            (3, "硬件故障"),
+            (4, "协议不支持"),
+        )
+        reasons = [name for bit, name in reason_names
+                   if inhibit_mask & (1 << bit)]
+        state = {
+            "version": data[0] & 0xFF,
+            "requested": bool(data[1]),
+            "effective": bool(data[2]),
+            "inhibit_mask": inhibit_mask,
+            "inhibit_reasons": reasons,
+            "inhibit_reason": "、".join(reasons) if reasons else "无",
+            "sync_active": bool(data[4]),
+            "mechanical_lock": bool(data[5]),
+            "torque_enabled": bool(data[5]),
+            "torque_requested": bool(data[6]) if data_len >= 10 else None,
+            "transition": data[7] if data_len >= 10 else None,
+            "grip_enabled_raw": data[8] if data_len >= 10 else None,
+            "requested_mode": (
+                "current" if data[9] == 1 else "position"
+            ) if data_len >= 10 else None,
+            "timestamp": time.time(),
+        }
+        with self._lock:
+            self._force_feedback_state = state
+        self._force_feedback_event.set()
+        return {"type": "force_feedback_state", **state}
+
+    def _parse_control_mode_ack(self, frame: List[int]) -> Optional[Dict]:
+        """Parse CMD=0x05, FUNC=0x01 mode request acknowledgement."""
+        if len(frame) < 9 or frame[3] < 3:
+            logger.warning("Control mode acknowledgement is too short")
+            return None
+
+        version = frame[4] & 0xFF
+        requested_raw = frame[5] & 0xFF
+        result = frame[6] & 0xFF
+        mode_map = {0: "position", 1: "current"}
+        acknowledgement = {
+            "version": version,
+            "requested_mode": mode_map.get(requested_raw),
+            "requested_mode_raw": requested_raw,
+            "result": result,
+            "accepted": result == 0,
+            "timestamp": time.time(),
+        }
+        with self._lock:
+            self._control_mode_ack = acknowledgement
+        self._control_mode_ack_event.set()
+        return {"type": "control_mode_ack", **acknowledgement}
+
+    def _parse_direct_current_ack(self, frame: List[int]) -> Optional[Dict]:
+        """Parse CMD=0x05, FUNC=0x02 direct-current acknowledgement."""
+        data_len = frame[3]
+        if data_len < 4 or len(frame) < 4 + data_len + 2:
+            return None
+
+        data = frame[4:4 + data_len]
+        result = data[1] & 0xFF
+        acknowledgement = {
+            "version": data[0] & 0xFF,
+            "result": result,
+            "accepted": result == 0,
+            "accepted_mask": data[2] & 0x3F,
+            "refresh_deadline_ms": (data[3] & 0xFF) * 10,
+            "timestamp": time.time(),
+        }
+        with self._lock:
+            self._direct_current_ack = acknowledgement
+        self._direct_current_ack_event.set()
+        return {"type": "direct_current_ack", **acknowledgement}
+
+    def _parse_control_mode_diagnostics(self, frame: List[int]) -> Optional[Dict]:
+        """Parse CMD=0x06, FUNC=0x24 HLS mode/current diagnostics."""
+        data_len = frame[3]
+        if data_len < 52 or len(frame) < 4 + data_len + 2:
+            logger.warning(
+                f"Control mode diagnostics length mismatch: "
+                f"LEN={data_len}, frame_len={len(frame)}"
+            )
+            return None
+
+        data = frame[4:4 + data_len]
+        mode_raw = data[1] & 0xFF
+        mode_map = {0: "position", 1: "current"}
+        mode = mode_map.get(mode_raw)
+        if mode is None:
+            logger.warning(f"Unsupported control mode value: {mode_raw}")
+            return None
+
+        def read_i16(offset: int) -> int:
+            value = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8)
+            return value - 0x10000 if value & 0x8000 else value
+
+        axes = []
+        for index in range(6):
+            offset = 4 + index * 8
+            axes.append({
+                "joint": index + 1,
+                "remote_torque_nm": read_i16(offset) / 1000.0,
+                "requested_current_a": read_i16(offset + 2) / 1000.0,
+                "output_current_a": read_i16(offset + 4) / 1000.0,
+                "measured_current_a": read_i16(offset + 6) / 1000.0,
+            })
+
+        timestamp = time.time()
+        diagnostics = {
+            "version": data[0] & 0xFF,
+            "mode": mode,
+            "blocked_mask": data[2] & 0xFF,
+            "feedback_valid_mask": data[3] & 0xFF,
+            "axes": axes,
+            "timestamp": timestamp,
+        }
+        with self._lock:
+            self._control_mode = mode
+            self._control_mode_diagnostics = diagnostics
+        self._control_mode_event.set()
+        return {"type": "control_mode_diagnostics", **diagnostics}
+
+    def _parse_physical_diagnostic(self, frame: List[int]) -> Optional[Dict]:
+        """解析 CMD=0x06、FUNC=0x25 的 J5 物理寄存器只读诊断。"""
+        data_len = frame[3]
+        if data_len < 24 or len(frame) < 4 + data_len + 2:
+            return None
+        data = frame[4:4 + data_len]
+
+        def read_u16(offset: int) -> int:
+            return (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8)
+
+        state_names = {
+            0: "idle",
+            1: "requested",
+            2: "pending",
+            3: "complete",
+            4: "failed",
+        }
+        diagnostic = {
+            "version": data[0] & 0xFF,
+            "state": state_names.get(data[1] & 0xFF, "unknown"),
+            "servo_id": data[2] & 0xFF,
+            "operating_mode_raw": data[3] & 0xFF,
+            "torque_enable": data[4] & 0xFF,
+            "protection_current_raw": read_u16(5),
+            "goal_position_raw": read_u16(7),
+            "goal_torque_raw": read_u16(9),
+            "goal_speed_raw": read_u16(11),
+            "torque_limit_raw": read_u16(13),
+            "present_position_raw": read_u16(15),
+            "present_speed_raw": read_u16(17),
+            "servo_status": data[19] & 0xFF,
+            "moving": data[20] & 0xFF,
+            "present_current_raw": read_u16(21),
+            "temperature_celsius": data[23] & 0xFF,
+            "timestamp": time.time(),
+        }
+        with self._lock:
+            self._physical_diagnostic = diagnostic
+        self._physical_diagnostic_event.set()
+        return {"type": "physical_diagnostic", **diagnostic}
+
+    def _parse_tx_diagnostic(self, frame: List[int]) -> Optional[Dict]:
+        """解析 CMD=0x06、FUNC=0x26 的舵机总线实际发送轨迹。"""
+        data_len = frame[3]
+        if data_len < 51 or len(frame) < 4 + data_len + 2:
+            return None
+        data = frame[4:4 + data_len]
+
+        def read_u16(offset: int) -> int:
+            return (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8)
+
+        def read_u32(offset: int) -> int:
+            return sum((data[offset + index] & 0xFF) << (8 * index)
+                       for index in range(4))
+
+        flags = data[50] & 0xFF
+        bus_state_raw = data[1] & 0xFF
+        diagnostic = {
+            "version": data[0] & 0xFF,
+            "bus_state_raw": bus_state_raw,
+            "bus_state": {
+                0: "idle",
+                1: "tx",
+                2: "wait_response",
+                3: "multi_receive",
+            }.get(bus_state_raw, "unknown"),
+            "last_torque_value": data[2] & 0xFF if flags & 0x01 else None,
+            "last_mode_value": data[3] & 0xFF if flags & 0x02 else None,
+            "tx_attempts": read_u32(4),
+            "tx_started": read_u32(8),
+            "tx_busy": read_u32(12),
+            "tx_errors": read_u32(16),
+            "torque_writes": read_u32(20),
+            "torque_on": read_u32(24),
+            "torque_off": read_u32(28),
+            "mode_writes": read_u32(32),
+            "last_started_ms": read_u32(36),
+            "last_torque_sequence": read_u32(40),
+            "last_mode_sequence": read_u32(44),
+            "last_batch_len": read_u16(48),
+            "has_torque_write": bool(flags & 0x01),
+            "has_mode_write": bool(flags & 0x02),
+            "timestamp": time.time(),
+        }
+        with self._lock:
+            self._tx_diagnostic = diagnostic
+        self._tx_diagnostic_event.set()
+        return {"type": "tx_diagnostic", **diagnostic}
 
     def wait_for_info(self, info_type: str, timeout: float = 2.0) -> bool:
         """

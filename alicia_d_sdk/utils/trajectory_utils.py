@@ -77,6 +77,10 @@ def record_waypoints_manual(controller,
     print("\n=== Manual Recording Mode ===")
     print("After disabling torque, drag to target position and press Enter to record")
 
+    if not prepare_position_mode_for_teaching(controller):
+        print("[安全] 未确认位置模式，已取消录制")
+        return []
+
     input("Press Enter to start...")
     controller.torque_control('off')
     print("[Safety] Torque disabled, you can drag the robot arm")
@@ -117,10 +121,55 @@ def record_waypoints_manual(controller,
                         print(f"[Record] Point {len(waypoints)}")
 
     finally:
-        controller.torque_control('on')
-        print("[Safety] Torque re-enabled")
+        if not prepare_position_mode_for_teaching(controller):
+            print("[安全] 未确认位置模式，扭矩保持关闭")
+        else:
+            controller.torque_control('on')
+            print("[Safety] Torque re-enabled")
 
     return waypoints
+
+
+def prepare_position_mode_for_teaching(controller) -> bool:
+    """在重新开启扭矩前，使 ADLH 返回可手动调整的位置模式。"""
+    get_mode = getattr(controller, "get_control_mode", None)
+    if not callable(get_mode):
+        print("[安全] 固件未提供模式接口，使用旧版扭矩流程")
+        return True
+
+    try:
+        mode = get_mode(timeout=1.5)
+    except Exception as exc:
+        print(f"[安全] 控制模式查询失败：{exc}")
+        return False
+
+    if mode is None:
+        print("[安全] 控制模式未回包，使用旧版扭矩流程")
+        return True
+    if mode == "position":
+        return True
+
+    print(f"[安全] 当前模式为 {mode}，先退出遥操")
+    leave_teleoperation = getattr(controller, "set_teleoperation_enabled", None)
+    set_mode = getattr(controller, "set_control_mode", None)
+    try:
+        if callable(leave_teleoperation):
+            switched = leave_teleoperation(False, timeout=3.0)
+        elif callable(set_mode):
+            switched = set_mode("position", timeout=3.0)
+        else:
+            print("[安全] 没有可用接口恢复位置模式")
+            return False
+    except Exception as exc:
+        print(f"[安全] 恢复位置模式失败：{exc}")
+        return False
+
+    confirmed_mode = get_mode(timeout=1.5)
+    if not switched or confirmed_mode != "position":
+        print(f"[安全] 未确认位置模式（回读={confirmed_mode}）")
+        return False
+    print("[安全] 已确认位置模式")
+    return True
 
 
 def load_joint_waypoints_from_file(file_path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:

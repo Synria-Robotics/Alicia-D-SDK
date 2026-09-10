@@ -26,7 +26,7 @@ def main(args):
     # Initialize robot instance
     robot = alicia_d_sdk.create_robot(
         port=args.port,
-        gripper_type=args.gripper_type
+        variant=args.variant
     )
     
     try:
@@ -55,7 +55,7 @@ if __name__ == '__main__':
     
     # Serial port settings
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--gripper_type', type=str, default="50mm",  help="夹爪型号 (默认: 50mm)")
+    parser.add_argument('--variant', type=str, default="alicia_duo", help="机器人模型 (默认: alicia_duo)")
     # Display settings
     parser.add_argument('--format', type=str, default='deg', choices=['rad', 'deg'], help="Angle display format: rad(radians) or deg(degrees)")
     parser.add_argument('--single', action='store_true',  help="Print state once (default: continuous print)")

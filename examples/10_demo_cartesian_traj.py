@@ -108,7 +108,7 @@ def main(args):
     
     robot = alicia_d_sdk.create_robot(
         port=args.port,
-        gripper_type=args.gripper_type,
+        variant=args.variant,
         base_link=args.base_link,
         end_link=args.end_link,
         backend=args.backend,
@@ -228,7 +228,8 @@ def main(args):
             gripper_values=None,
             initial_tolerance=0.5,
             ik_success_rate=success_rate,
-            min_success_rate=0.8
+            min_success_rate=0.8,
+            allow_low_ik_success=args.force_low_ik_execution
         )
 
         if exec_result.get('cancelled', False):
@@ -254,7 +255,7 @@ if __name__ == '__main__':
     
     # Robot connection
     parser.add_argument('--port', type=str, default="", help="串口端口 (例如: /dev/ttyUSB0 或 COM3)")
-    parser.add_argument('--gripper_type', type=str, default="50mm", help="夹爪类型")
+    parser.add_argument('--variant', type=str, default="alicia_duo", help="机器人模型 (默认: alicia_duo)")
     parser.add_argument('--base_link', type=str, default="base_link", help="基座链路名称")
     parser.add_argument('--end_link', type=str, default="tool0", help="末端执行器链路名称")
     
@@ -280,6 +281,7 @@ if __name__ == '__main__':
     
     # Execution
     parser.add_argument('--execute', action='store_true', help='Execute trajectory immediately without waiting for user input')
+    parser.add_argument('--force-low-ik-execution', action='store_true', help='危险：允许在IK成功率低于80%时继续执行')
     parser.add_argument('--speed-deg-s', type=int, default=30, help="关节运动速度 (度/秒)")
     parser.add_argument('--timeout', type=float, default=10.0, help='Timeout per command (seconds)')
     

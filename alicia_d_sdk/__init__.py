@@ -5,7 +5,7 @@
 # Website: https://synriarobotics.ai
 
 """
-Alicia-D SDK v6.1.0rc5 - Bridged with RoboCore
+Alicia-D SDK v6.1.8 - Bridged with RoboCore
 
 Architecture Layers:
 - User Layer: SynriaRobotAPI (unified user interface)
@@ -29,29 +29,23 @@ from alicia_d_sdk.api.synria_robot_api import BackendName
 from robocore.modeling import RobotModel
 from robocore.kinematics import forward_kinematics, inverse_kinematics, jacobian
 from synriard import get_model_path
-import json
 from pathlib import Path
 from typing import Optional
 
 
-__version__ = "6.1.0rc5"
+__version__ = "6.1.8"
 __author__ = "Synria Robotics"
-__description__ = "Alicia-D Robot Arm SDK v6.1.0rc5 - Bridged with RoboCore"
+__description__ = "Alicia-D Robot Arm SDK v6.1.8 - Bridged with RoboCore"
 
+_BUNDLED_MODEL_VARIANT = "alicia_duo"
+_BUNDLED_MODEL_PATH = (
+    Path(__file__).parent
+    / "models"
+    / "Alicia_duo"
+    / "urdf"
+    / "Alicia-duo.urdf"
+)
 
-def _get_gripper_type_from_json() -> str:
-    """Read gripper type from JSON file, return default if not found."""
-    json_path = Path(__file__).parent / "api" / "gripper_type.json"
-    if json_path.exists():
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            cached_type = data.get("type_name")
-            if isinstance(cached_type, str) and cached_type:
-                return cached_type
-        except Exception:
-            pass
-    return "50mm"
 
 # Re-export RoboCore components for convenience
 __all__ = [
@@ -92,7 +86,8 @@ def create_robot(
 
     :param port: Serial port
     :param version: Version name, e.g., "v5_6", "v7_0", etc.
-    :param variant: Variant name, e.g., "gripper_50mm", "gripper_100mm", "leader_ur", etc.
+    :param variant: Model variant. None or "alicia_duo" selects the bundled force-control leader model.
+        Other values such as "gripper_50mm" and "leader" use the legacy synriard model package.
     :param model_format: Model format, 'urdf' or 'mjcf', default is 'urdf'
     :param debug_mode: Debug mode
     :param base_link: Base link name in the robot model (default 'base_link')
@@ -100,23 +95,34 @@ def create_robot(
     :param backend: Computation backend, 'cpp', 'numpy', or 'torch' (default: None, uses 'cpp')
     :param device: Device for torch backend, 'cpu' or 'cuda' (default: 'cpu', ignored for 'cpp' and 'numpy')
     :param model_path: Model path, if None, use default model path
-    :param gripper_type: Gripper type:  deprecated, use variant instead please
-        - explicit value such as "50mm" / "100mm" for user-defined configuration
-        - None to auto-select from saved JSON (if available) or default to "50mm"
+    :param gripper_type: Deprecated compatibility option. An explicit value such as
+        "50mm" selects the matching legacy gripper model when variant is not provided.
     :return: SynriaRobotAPI instance
     """
     servo_driver = ServoDriver(port=port, debug_mode=debug_mode)
 
-    effective_gripper_type = gripper_type if gripper_type is not None else _get_gripper_type_from_json()
-    variant = variant if variant is not None else f"gripper_{effective_gripper_type}"
-
     if model_path is None:
-        model_path = get_model_path(
-            "Alicia_D",
-            version=version,
-            variant=variant,
-            model_format=model_format
-        )
+        selected_variant = variant
+        if selected_variant is None and gripper_type is not None:
+            selected_variant = f"gripper_{gripper_type}"
+
+        if selected_variant is None or selected_variant == _BUNDLED_MODEL_VARIANT:
+            if model_format != "urdf":
+                raise ValueError(
+                    "The bundled Alicia-duo model is currently available only in URDF format"
+                )
+            model_path = _BUNDLED_MODEL_PATH
+        else:
+            model_path = get_model_path(
+                "Alicia_D",
+                version=version,
+                variant=selected_variant,
+                model_format=model_format
+            )
+
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Robot model file not found: {model_path}")
     robot_model = RobotModel(str(model_path), base_link=base_link, end_link=end_link)
 
     robot = SynriaRobotAPI(

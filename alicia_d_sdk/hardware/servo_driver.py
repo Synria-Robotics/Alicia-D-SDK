@@ -54,6 +54,8 @@ class ServoDriver:
         "self_check": [0xAA, 0xFE, 0x00, 0x00, 0xFE, 0x93, 0xFF],
         # Gripper type acquisition
         "gripper_type": [0xAA, 0x04, 0x0E, 0x01, 0xFE, 0x1B, 0xFF],
+        # Read public control mode and HLS current diagnostics.
+        "control_mode": [0xAA, 0x06, 0x24, 0x01, 0xFE, 0xA6, 0xFF],
     }
 
     def __init__(self, port: str = "", debug_mode: bool = False):
@@ -271,6 +273,184 @@ class ServoDriver:
             success = self.serial_comm.send_data(command)
             return success
 
+    def get_control_mode(self, timeout: float = 1.0) -> Optional[str]:
+        """Read the applied public control mode from the D controller."""
+        if not self.acquire_info("control_mode", wait=True, timeout=timeout):
+            return None
+        return self.data_parser.get_info("control_mode")
+
+    def get_control_mode_diagnostics(self,
+                                     timeout: float = 1.0) -> Optional[Dict]:
+        """Read HLS public mode and six-axis current diagnostics."""
+        if not self.acquire_info("control_mode", wait=True, timeout=timeout):
+            return None
+        return self.data_parser.get_info("control_mode_diagnostics")
+
+    def _force_feedback_command(self, action: int) -> List[int]:
+        frame = [self.FRAME_HEADER, 0x06, 0x20, 0x01,
+                 action & 0xFF, 0, self.FRAME_FOOTER]
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return frame
+
+    def get_force_feedback_state(self,
+                                 timeout: float = 1.0) -> Optional[Dict]:
+        """读取遥操力反馈请求、实际生效状态和抑制原因。"""
+        event = self.data_parser._force_feedback_event
+        event.clear()
+        if not self.serial_comm.send_data(self._force_feedback_command(0xFE)):
+            return None
+        if not event.wait(timeout):
+            return None
+        return self.data_parser.get_info("force_feedback")
+
+    def set_force_feedback_enabled(self,
+                                   enabled: bool,
+                                   timeout: float = 2.0) -> bool:
+        """幂等设置力反馈请求，并轮询到固件确认请求状态。"""
+        expected = bool(enabled)
+        deadline = time.time() + timeout
+        command = self._force_feedback_command(1 if expected else 0)
+        while time.time() < deadline:
+            event = self.data_parser._force_feedback_event
+            event.clear()
+            if self.serial_comm.send_data(command):
+                event.wait(min(0.2, max(0.0, deadline - time.time())))
+            state = self.get_force_feedback_state(
+                timeout=min(0.25, max(0.0, deadline - time.time()))
+            )
+            if state is not None and state["requested"] == expected:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def get_physical_diagnostic(self, timeout: float = 1.0) -> Optional[Dict]:
+        """读取 J5 物理舵机模式、扭矩、目标和反馈寄存器。"""
+        def make_command(action: int) -> List[int]:
+            frame = [0xAA, 0x06, 0x25, 0x01, action & 0xFF, 0x00, 0xFF]
+            frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+            return frame
+
+        event = self.data_parser._physical_diagnostic_event
+        event.clear()
+        if not self.serial_comm.send_data(make_command(0)):
+            return None
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            event.clear()
+            if not self.serial_comm.send_data(make_command(1)):
+                time.sleep(0.05)
+                continue
+            if event.wait(min(0.1, max(0.0, deadline - time.time()))):
+                diagnostic = self.data_parser.get_info("physical_diagnostic")
+                if diagnostic is not None and diagnostic["state"] in (
+                    "complete", "failed"
+                ):
+                    return diagnostic
+            time.sleep(0.02)
+        return self.data_parser.get_info("physical_diagnostic")
+
+    def get_tx_diagnostic(self, timeout: float = 1.0) -> Optional[Dict]:
+        """读取 UART1 已实际启动 DMA 的模式与扭矩写入轨迹。"""
+        frame = [0xAA, 0x06, 0x26, 0x01, 0xFE, 0x00, 0xFF]
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        event = self.data_parser._tx_diagnostic_event
+        event.clear()
+        if not self.serial_comm.send_data(frame):
+            return None
+        if not event.wait(timeout):
+            return None
+        return self.data_parser.get_info("tx_diagnostic")
+
+    def _direct_current_command(self, currents_ma: List[int]) -> List[int]:
+        if len(currents_ma) != self.joint_count:
+            raise ValueError("currents_ma must contain exactly 6 values")
+
+        frame = [self.FRAME_HEADER, 0x05, 0x02, 0x0C]
+        for current in currents_ma:
+            value = int(current)
+            if value < -6000 or value > 6000:
+                raise ValueError("direct current must be within +/-6000 mA")
+            raw = value & 0xFFFF
+            frame.append(raw & 0xFF)
+            frame.append((raw >> 8) & 0xFF)
+        frame.extend([0x00, self.FRAME_FOOTER])
+        frame[-2] = self.serial_comm.calculate_checksum(frame[1:-2])
+        return frame
+
+    def set_direct_current(self,
+                           currents_ma: List[int],
+                           timeout: float = 0.5) -> Optional[Dict]:
+        """Send a six-axis HLS direct-current target in milliamps.
+
+        Firmware accepts this command only after current mode is applied,
+        torque is enabled, and the HLS controller is stable. The caller must
+        refresh faster than the returned refresh deadline, currently 100 ms.
+        """
+        command = self._direct_current_command(currents_ma)
+        event = self.data_parser._direct_current_ack_event
+        event.clear()
+        if not self.serial_comm.send_data(command):
+            return None
+        if not event.wait(timeout):
+            return None
+        return self.data_parser.get_direct_current_ack()
+
+    def set_control_mode(self, mode: str, timeout: float = 2.0) -> bool:
+        """Switch between public ``position`` and ``current`` modes.
+
+        The set-command acknowledgement only confirms that firmware accepted
+        the request. This method also polls the diagnostic endpoint until the
+        requested mode is reported as applied.
+        """
+        if not isinstance(mode, str):
+            raise ValueError("mode must be 'position' or 'current'")
+        normalized_mode = mode.strip().lower()
+        mode_values = {"position": 0, "current": 1}
+        if normalized_mode not in mode_values:
+            raise ValueError("mode must be 'position' or 'current'")
+
+        mode_value = mode_values[normalized_mode]
+        command = [self.FRAME_HEADER, 0x05, 0x01, 0x01,
+                   mode_value, 0, self.FRAME_FOOTER]
+        command[-2] = self.serial_comm.calculate_checksum(command[1:-2])
+
+        ack_event = self.data_parser._control_mode_ack_event
+        ack_event.clear()
+        deadline = time.time() + timeout
+        while time.time() < deadline and not ack_event.is_set():
+            if not self.serial_comm.send_data(command):
+                time.sleep(0.05)
+                continue
+            ack_event.wait(min(0.2, max(0.0, deadline - time.time())))
+
+        acknowledgement = self.data_parser.get_control_mode_ack()
+        if (not ack_event.is_set() or acknowledgement is None or
+                acknowledgement["requested_mode"] != normalized_mode):
+            logger.warning(
+                f"Control mode request '{normalized_mode}' was not acknowledged"
+            )
+            return False
+        if not acknowledgement["accepted"]:
+            logger.warning(
+                f"Control mode request '{normalized_mode}' was rejected "
+                f"with result={acknowledgement['result']}"
+            )
+            return False
+
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            applied_mode = self.get_control_mode(timeout=min(0.3, remaining))
+            if applied_mode == normalized_mode:
+                return True
+            time.sleep(0.02)
+
+        logger.warning(
+            f"Control mode '{normalized_mode}' was accepted but not applied "
+            f"within {timeout:.1f}s"
+        )
+        return False
+
     def set_joint_and_gripper(self,
                               joint_angles: Optional[List[float]] = None,
                               gripper_value: Optional[float] = None,
@@ -281,7 +461,7 @@ class ServoDriver:
 
         :param joint_angles: Optional angle list (radians) for 6 joints. If None, keeps current joints (or zeros if state unavailable)
         :param gripper_value: Optional gripper value (0-1000). If None, keeps current gripper
-        :param speed_deg_s: Speed in degrees per second. Can be int/float (same for all joints) or list/array (per-joint speeds, 4.39-439.45 deg/s), default 10
+        :param speed_deg_s: Speed in degrees per second. Can be int/float (same for all joints) or list/array (per-joint speeds, 0.09-439.45 deg/s), default 10
         :param gripper_speed_deg_s: Gripper speed in degrees per second. If None, uses default 5500 ticks/s (≈483.4 deg/s)
         :return: True if successful
         """
@@ -333,7 +513,7 @@ class ServoDriver:
 
         :param joint_angles: Optional angle list (radians) for 6 joints. If None, keeps current joints (or zeros if state unavailable)
         :param gripper_value: Optional gripper value (0-1000). If None, keeps current gripper
-        :param speed_deg_s: Speed in degrees per second. Can be int/float (same for all joints) or list/array (per-joint speeds, 4.39-439.45 deg/s)
+        :param speed_deg_s: Speed in degrees per second. Can be int/float (same for all joints) or list/array (per-joint speeds, 0.09-439.45 deg/s)
         :param gripper_speed_deg_s: Gripper speed in degrees per second. If None, uses default 5500 ticks/s (≈483.4 deg/s)
         :return: Frame byte list
         """
@@ -448,41 +628,18 @@ class ServoDriver:
         return max(0, min(4095, value))
 
     def _value_to_hardware_value_speed(self, speed_deg_s: Union[int, float]) -> int:
-        """
-        Converts speed from degrees per second to hardware value (50-5000, step 50).
-        Mapping: 360 deg/s = 4096 ticks/s, so 50 ticks/s ≈ 4.39 deg/s, 5000 ticks/s ≈ 439.45 deg/s.
+        """Convert degrees per second to the servo speed register value.
 
-        :param speed_deg_s: The desired speed in degrees per second (4.39-439.45, required range)
-        :return: A corresponding raw integer speed value (50-5000, multiple of 50)
+        One register count represents 360 / 4096 deg/s. Single-count
+        resolution is retained so a 1 deg/s command is not rounded up to the
+        former 50-count (about 4.39 deg/s) software minimum.
         """
-        # Hardware speed range: 50-5000 ticks/s (step 50)
-        MIN_HARDWARE_VALUE = 50
+        MIN_HARDWARE_VALUE = 1
         MAX_HARDWARE_VALUE = 5000
-        STEP_SIZE = 50
-
-        # Known mapping: 360 deg/s = 4096 ticks/s
-        # Calculate speed range based on hardware range
-        # Ratio: 360 / 4096 = 0.087890625 deg/(tick/s)
         DEG_PER_TICK_PER_SEC = 360.0 / 4096.0
-        MIN_SPEED_DEG_S = MIN_HARDWARE_VALUE * DEG_PER_TICK_PER_SEC  # ≈ 4.39 deg/s
-        MAX_SPEED_DEG_S = MAX_HARDWARE_VALUE * DEG_PER_TICK_PER_SEC  # ≈ 439.45 deg/s
-
-        # Validate and clip speed to required range
-        if speed_deg_s < MIN_SPEED_DEG_S:
-            logger.warning(f"Speed below range: {speed_deg_s} deg/s (min {MIN_SPEED_DEG_S:.2f}), will be clipped to {MIN_SPEED_DEG_S:.2f}")
-            speed_deg_s = MIN_SPEED_DEG_S
-        elif speed_deg_s > MAX_SPEED_DEG_S:
-            logger.warning(f"Speed above range: {speed_deg_s} deg/s (max {MAX_SPEED_DEG_S:.2f}), will be clipped to {MAX_SPEED_DEG_S:.2f}")
-            speed_deg_s = MAX_SPEED_DEG_S
-
-        # Convert deg/s to ticks/s using the known ratio
-        hardware_value = speed_deg_s / DEG_PER_TICK_PER_SEC
-
-        # Round to nearest multiple of 50
-        hardware_value = round(hardware_value / STEP_SIZE) * STEP_SIZE
+        hardware_value = round(speed_deg_s / DEG_PER_TICK_PER_SEC)
         logger.debug(f"Speed: {speed_deg_s} deg/s, Hardware value: {hardware_value}")
-
-        return max(MIN_HARDWARE_VALUE, min(MAX_HARDWARE_VALUE, int(hardware_value)))
+        return max(MIN_HARDWARE_VALUE, min(MAX_HARDWARE_VALUE, hardware_value))
 
     def _gripper_speed_deg_s_to_ticks(self, speed_deg_s: float) -> int:
         """

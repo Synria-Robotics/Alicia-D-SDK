@@ -199,6 +199,27 @@ robot = create_robot()
   
   **Returns:** True if successful, False otherwise
 
+- `get_control_mode(timeout=1.0)`
+  Read the applied public mode. Returns `"position"`, `"current"`, or `None`.
+
+- `set_control_mode(mode, timeout=2.0)`
+  Switch between `"position"` and `"current"`. The startup default is position
+  mode. The method waits for the request acknowledgement and then reads the
+  applied state back before returning `True`. Torque control remains a separate
+  operation and does not implicitly switch modes.
+
+- `get_teleoperation_state(timeout=1.0)` / `set_teleoperation_enabled(enabled, timeout=2.0)`
+  Read or switch between position mode and current teleoperation mode.
+
+- `get_force_feedback_state(timeout=1.0)`
+  Read the requested/effective state, inhibit mask and reasons without changing
+  robot state.
+
+- `set_force_feedback_enabled(enabled, timeout=2.0)`
+  Idempotently set the force-feedback request and wait for firmware confirmation.
+  Disabling force feedback removes remote residual torque while preserving gravity
+  compensation in teleoperation mode.
+
 - `zero_calibration()`  
   Execute zero calibration process: disable torque → manual drag → re-enable torque → record zero point
 

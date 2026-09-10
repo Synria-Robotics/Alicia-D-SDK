@@ -25,7 +25,7 @@ def main(args):
     # Initialize robot instance
     robot = alicia_d_sdk.create_robot(
         port=args.port,
-        gripper_type=args.gripper_type
+        variant=args.variant
     )
     
     try:
@@ -113,7 +113,7 @@ if __name__ == '__main__':
     
     # Serial port settings
     parser.add_argument('--port', type=str, default="", help="Serial port (e.g. /dev/ttyUSB0 or COM3)")
-    parser.add_argument('--gripper_type', type=str, default=None, help="Gripper type (50mm or 100mm)")
+    parser.add_argument('--variant', type=str, default="alicia_duo", help="Robot model variant")
     
     # Benchmark settings
     parser.add_argument('--duration', type=float, default=5.0, help="Benchmark duration in seconds (default: 5.0)")

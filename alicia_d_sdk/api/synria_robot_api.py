@@ -38,6 +38,12 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 BackendName = Literal['cpp', 'numpy', 'torch']
 
 
+def _model_num_dof(robot_model: RobotModel) -> int:
+    """Return model DOF across RoboCore property- and method-based releases."""
+    value = robot_model.num_dof
+    return int(value() if callable(value) else value)
+
+
 class SynriaRobotAPI:
     """Synria robot arm API - provides unified user interface"""
 
@@ -122,6 +128,7 @@ class SynriaRobotAPI:
             - "velocity": Returns List[float] of velocities in degrees per second
             - "gripper_type": Returns str (e.g., "50mm" or "100mm") or None if unavailable
             - "self_check": Returns Dict with self-check data (or None if failed)
+            - "control_mode": Returns "position" or "current"
         :param timeout: Maximum time to wait for response in seconds
         :return: Requested data or None if failed
         """
@@ -210,7 +217,7 @@ class SynriaRobotAPI:
         :param target_joints: Optional target joint angles. If None, keeps current
         :param gripper_value: Optional gripper value (0-1000). If None, keeps current
         :param joint_format: Unit format for joints, 'rad' or 'deg'
-        :param speed_deg_s: Speed in degrees per second. Can be int/float (same for all joints) or list/array (per-joint speeds, 4.39-439.45 deg/s), default 10
+        :param speed_deg_s: Speed in degrees per second. Can be int/float (same for all joints) or list/array (per-joint speeds, 0.09-439.45 deg/s), default 10
         :param gripper_speed_deg_s: Gripper speed in degrees per second. If None, uses default 5500 ticks/s (≈483.4 deg/s)
         :param tolerance: Rad, acceptable abs distance to target for joints
         :param timeout: Seconds, maximum wait time
@@ -669,7 +676,7 @@ class SynriaRobotAPI:
                 if len(joint_angles) > 0:
                     joint_angles.append(joint_angles[-1])
                 else:
-                    joint_angles.append(np.zeros(len(self.robot_model._chain_actuated)))
+                    joint_angles.append(np.zeros(_model_num_dof(self.robot_model)))
 
         ik_time = time.time() - start_time
 
@@ -715,26 +722,125 @@ class SynriaRobotAPI:
             logger.error("command parameter must be 'on' or 'off'")
             return False
 
-    def zero_calibration(self) -> bool:
-        """Execute zero position calibration procedure.
+    def get_control_mode(self, timeout: float = 1.0) -> Optional[str]:
+        """Return the applied D-arm control mode.
 
-        :return: True if calibration successful
+        :return: ``"position"``, ``"current"``, or None on timeout
         """
-        logger.warning("This operation is irreversible and will change the factory zero position, please operate with caution")
-        logger.info("Starting zero calibration, robot arm will lose torque")
-        logger.info("Press Enter to continue, Ctrl+C to cancel...")
-        input()
-        if not self.torque_control('off'):
-            logger.error("Failed to disable torque")
-            return False
-        logger.info("Please manually drag the robot arm to zero position, then press Enter to continue...")
-        input()
+        return self.servo_driver.get_control_mode(timeout=timeout)
 
-        if not self.servo_driver.acquire_info("zero_cali", wait=True, timeout=2.0):
-            logger.error("Zero calibration failed")
+    def set_control_mode(self, mode: str, timeout: float = 2.0) -> bool:
+        """Switch the D arm between position and current control.
+
+        The firmware performs an ordered torque-off/mode-switch sequence and
+        the SDK waits until the applied mode can be read back.
+
+        :param mode: ``"position"`` or ``"current"``
+        :param timeout: Maximum acknowledgement and apply time in seconds
+        :return: True only when the requested mode is confirmed as applied
+        """
+        try:
+            return self.servo_driver.set_control_mode(mode, timeout=timeout)
+        except ValueError as exc:
+            logger.error(str(exc))
             return False
-        time.sleep(0.1)
-        self.servo_driver.acquire_info("torque_on", wait=True, timeout=1.0)
+
+    def get_teleoperation_state(self, timeout: float = 1.0) -> Dict:
+        """返回遥操模式是否已经生效。"""
+        mode = self.get_control_mode(timeout=timeout)
+        return {
+            "enabled": mode == "current",
+            "active": mode == "current",
+            "mode": mode,
+        }
+
+    def set_teleoperation_enabled(self,
+                                  enabled: bool,
+                                  timeout: float = 2.0) -> bool:
+        """在公开位置模式与电流遥操模式之间安全切换。
+
+        退出遥操只关闭力反馈并切回位置模式，不自动开启扭矩；机械臂保持
+        可手动调整，位置锁定仍由锁定键或独立扭矩命令控制。
+        """
+        if enabled:
+            return self.set_control_mode("current", timeout=timeout)
+
+        self.set_force_feedback_enabled(False, timeout=timeout)
+        return self.set_control_mode("position", timeout=timeout)
+
+    def get_hls_current_diagnostics(self,
+                                    timeout: float = 1.0) -> Optional[Dict]:
+        """读取 HLS 全局模式和六轴电流诊断。"""
+        return self.servo_driver.get_control_mode_diagnostics(timeout=timeout)
+
+    def set_direct_current(self,
+                           currents_ma: List[int],
+                           timeout: float = 0.5) -> Optional[Dict]:
+        """设置 HLS 六轴直接电流，单位 mA。"""
+        return self.servo_driver.set_direct_current(
+            currents_ma,
+            timeout=timeout,
+        )
+
+    def get_force_feedback_state(self,
+                                 timeout: float = 1.0) -> Optional[Dict]:
+        """返回力反馈请求、实际生效状态和抑制原因。"""
+        return self.servo_driver.get_force_feedback_state(timeout=timeout)
+
+    def set_force_feedback_enabled(self,
+                                   enabled: bool,
+                                   timeout: float = 2.0) -> bool:
+        """请求开启或关闭力反馈，不直接写入舵机电流。"""
+        return self.servo_driver.set_force_feedback_enabled(
+            enabled, timeout=timeout
+        )
+
+    def zero_calibration(self) -> bool:
+        """将六轴当前位置设置为新零点。
+
+        调零只能在位置模式下执行。方法会先关闭扭矩，再通过正式
+        固件保留的 0x03/0x00 协议写入整臂零点。该协议不返回 ACK，
+        新零点需要重新上电后读取关节位置进行验证。
+
+        :return: 整臂调零命令成功写入用户串口时返回 True
+        """
+        logger.warning(
+            "警告：调零会永久改变当前六轴零点，请确认机械臂已摆在机械零位。"
+        )
+        input("确认要继续后按 Enter，按 Ctrl+C 取消...")
+
+        control_mode = self.get_control_mode(timeout=2.0)
+        if control_mode is None:
+            logger.warning(
+                "当前 D 端固件未提供控制模式诊断，将按旧版默认位置模式兼容。"
+            )
+            logger.warning(
+                "请确认已退出遥操和力反馈；接下来会先关闭扭矩再调零。"
+            )
+        else:
+            logger.info(f"当前控制模式：{control_mode}")
+        if control_mode is not None and control_mode != "position":
+            logger.info("调零只能在位置模式下执行，正在切换到 position。")
+            if not self.set_control_mode("position", timeout=2.0):
+                logger.warning("切换到位置模式失败，已取消调零。")
+                return False
+
+        if not self.torque_control("off", timeout=1.0):
+            logger.warning("扭矩关闭命令发送失败，已取消调零。")
+            return False
+        time.sleep(0.25)
+        logger.info("扭矩已设为关闭，请用手托住并将六轴摆到机械零位。")
+        input("六轴姿态确认无误后按 Enter 写入新零点...")
+
+        if not self.servo_driver.acquire_info("zero_cali", wait=False):
+            logger.warning("整臂调零命令发送失败，扭矩保持关闭。")
+            return False
+
+        logger.info("整臂调零命令已发送，正在等待舵机写入零点。")
+        time.sleep(2.0)
+        logger.warning(
+            "零点写入阶段已结束，扭矩保持关闭。请重新上电后读取六轴角度验证。"
+        )
         return True
 
     def print_state(self, continuous: bool = False, output_format: str = "deg", fps: float = 200.0):
@@ -811,21 +917,7 @@ class SynriaRobotAPI:
         :param scale: Range scale factor within joint limits
         :return: Random joint angles in radians
         """
-        rng = np.random.default_rng()
-        q = [0.0] * self.robot_model.num_dof()
-
-        for js in self.robot_model._actuated:
-            lo, hi = -1.0, 1.0
-            if js.limit:
-                if js.limit[0] is not None:
-                    lo = js.limit[0]
-                if js.limit[1] is not None:
-                    hi = js.limit[1]
-            mid = 0.5 * (lo + hi)
-            span = 0.5 * (hi - lo) * scale
-            q[js.index] = float(rng.uniform(mid - span, mid + span))
-
-        return q
+        return to_numpy(self.robot_model.random_q(scale=scale)).tolist()
 
     def _wait_for_joint_target(self,
                                target_joints: Optional[List[float]],

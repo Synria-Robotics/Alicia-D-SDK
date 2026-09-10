@@ -359,6 +359,7 @@ class CartesianTrajectoryExecutor(_BaseTrajectoryExecutor):
         initial_wait: bool = True,
         ik_success_rate: Optional[float] = None,
         min_success_rate: float = 0.8,
+        allow_low_ik_success: bool = False,
         on_progress: Optional[Callable[[int, int, float], None]] = None,
         on_failure: Optional[Callable[[int, str], bool]] = None
     ) -> Dict[str, Any]:
@@ -371,6 +372,7 @@ class CartesianTrajectoryExecutor(_BaseTrajectoryExecutor):
         :param initial_wait: If True, wait for initial position to be reached (default: True)
         :param ik_success_rate: IK success rate (0.0 to 1.0) for validation
         :param min_success_rate: Minimum acceptable IK success rate (default: 0.8)
+        :param allow_low_ik_success: Allow an explicit interactive override below the threshold
         :param on_progress: Optional callback function(point_index, total_points, time)
         :param on_failure: Optional callback function(point_index, error_message) -> bool
         :return: Dictionary with execution statistics
@@ -379,6 +381,17 @@ class CartesianTrajectoryExecutor(_BaseTrajectoryExecutor):
         if ik_success_rate is not None and ik_success_rate < min_success_rate:
             beauty_print(f"Warning: IK success rate is only {ik_success_rate*100:.1f}%", type="warning")
             beauty_print("Some poses may not be executed correctly", type="warning")
+            if not allow_low_ik_success:
+                beauty_print("Execution blocked because IK success rate is below the safety threshold", type="warning")
+                return {
+                    'success': False,
+                    'executed': 0,
+                    'failed': 0,
+                    'total': len(joint_angles),
+                    'duration': 0.0,
+                    'cancelled': True
+                }
+
             user_input = input("Continue execution anyway? (y/n): ").strip().lower()
             if user_input != 'y':
                 beauty_print("Execution cancelled by user", type="warning")

@@ -113,7 +113,7 @@ def main(args):
     
     robot = alicia_d_sdk.create_robot(
         port=args.port,
-        gripper_type=args.gripper_type,
+        variant=args.variant,
         base_link=args.base_link,
         end_link=args.end_link,
         backend=args.backend,
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     
     # Robot connection
     parser.add_argument('--port', type=str, default="", help="Serial port (e.g. /dev/ttyUSB0 or COM3)")
-    parser.add_argument('--gripper_type', type=str, default="50mm", help="Gripper type")
+    parser.add_argument('--variant', type=str, default="alicia_duo", help="Robot model variant")
     parser.add_argument('--base_link', type=str, default="base_link", help="Base link name, world or base_link etc.")
     parser.add_argument('--end_link', type=str, default="tool0", help="End effector link name, tool0 or link6 etc.")
 
